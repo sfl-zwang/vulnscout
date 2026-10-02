@@ -18,6 +18,7 @@ from src.controllers import operation_queue as queue_mod
 from src.controllers.job_context import CancelledError, JobContext, OperationError
 from src.controllers.operation_queue import OperationQueue
 from src.controllers.operation_registry import (
+    LANE_ASSESSMENT,
     LANE_PIPELINE,
     STATUS_CANCELLED,
     STATUS_DONE,
@@ -380,11 +381,17 @@ def test_lane_start_queue_submission_and_queue_initialisation(monkeypatch):
         worker_lane._worker_loop(lambda _job: (_ for _ in ()).throw(RuntimeError("stop worker")))
     assert worker_lane.running_job(job.op_id) is job
 
-    starts = []
-    monkeypatch.setattr(queue_mod._Lane, "start", lambda self, execute: starts.append((self.name, execute)))
+    started.clear()
     operation_queue = OperationQueue()
     operation_queue.init_app(Flask(__name__))
-    assert [name for name, _execute in starts] == ["pipeline", "export", "upload"]
+    assert operation_queue._lanes[LANE_ASSESSMENT].workers == 1
+    assert [kwargs["name"] for _, _, kwargs in started] == [
+        "operations-pipeline-0",
+        "operations-export-0",
+        "operations-export-1",
+        "operations-assessment-0",
+    ]
+    assert all(args == (operation_queue._execute,) for _, args, _ in started)
 
     submitted = []
     monkeypatch.setattr(
