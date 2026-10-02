@@ -58,10 +58,15 @@ RUN curl -sSfL "https://raw.githubusercontent.com/anchore/grype/$GRYPE_VERSION/i
 # Install dependencies for python backend
 COPY requirements/base.txt ./
 RUN pip3 install --no-cache-dir -r base.txt --break-system-packages
+COPY requirements/mcp.txt /scan/mcp.txt
+RUN pip3 install --no-cache-dir -r /scan/mcp.txt --break-system-packages
+RUN python3 -m copilot download-runtime
 
 # Create /scan/src
 RUN mkdir -p src
 COPY src ./src
+COPY .github/skills/cve-assessment /scan/.github/skills/cve-assessment
+COPY vulnscout_mcp /scan/vulnscout_mcp
 RUN chmod +x src/entrypoint.sh
 COPY --from=buildfront /src/static ./src/static
 
