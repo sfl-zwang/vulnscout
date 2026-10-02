@@ -48,7 +48,6 @@ def ctx(monkeypatch):
 @pytest.fixture
 def fake_sdk(monkeypatch, selection):
     from src.controllers import copilot_assessment_contract as contract
-    monkeypatch.setattr(runner, "MCP_SCRIPT", runner.SKILL_DIR.parents[2] / "vulnscout_mcp/server.py")
     monkeypatch.setattr(contract, "_validate_observed", lambda *_: None)
     class FakeSession:
         def __init__(self, sdk):
@@ -144,6 +143,7 @@ def test_success_is_read_only_and_seals_before_write(fake_sdk, ctx, selection, s
         "update_variant_context", "write_assessment_review",
     })
     assert "test-token" not in str(options["mcp_servers"])
+    assert options["mcp_servers"]["vulnscout"]["args"] == [str(runner.MCP_SCRIPT)]
     assert options["on_permission_request"](SimpleNamespace(kind="shell"), {}) != (
         options["on_permission_request"](SimpleNamespace(kind="custom-tool", tool_name="read_project_file"), {})
     )

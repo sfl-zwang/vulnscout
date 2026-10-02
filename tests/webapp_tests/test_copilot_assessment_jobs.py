@@ -28,7 +28,13 @@ def client(monkeypatch, tmp_path):
     monkeypatch.setenv("FLASK_SQLALCHEMY_DATABASE_URI", "sqlite:///:memory:")
     monkeypatch.setenv("VULNSCOUT_AGENT_ENABLED", "1")
     monkeypatch.setenv("COPILOT_MODEL", "gpt-5.4")
-    monkeypatch.setattr(copilot_settings, "check_readiness", lambda: {"ready": True, "errors": {}})
+    monkeypatch.delenv("VULNSCOUT_MCP_SERVER_PATH", raising=False)
+    monkeypatch.setattr(copilot_settings, "read_token", lambda: "test-token")
+
+    async def probe(_token, _model):
+        return {}, ["gpt-5.4"]
+
+    monkeypatch.setattr(copilot_settings, "_probe", probe)
     from src.bin.webapp import create_app
 
     scan_file = tmp_path / "scan_status.txt"
@@ -102,6 +108,18 @@ def test_missing_readiness(client, monkeypatch):
     response = web.post("/api/copilot-assessments", json=scope)
     assert response.status_code == 503
     assert "credential" in response.get_json()["errors"]
+
+
+def test_missing_packaged_mcp_rejects_start_even_with_env_path(client, monkeypatch, tmp_path):
+    web, scope, _ = client
+    alternative = tmp_path / "server.py"
+    alternative.write_text("# unrelated script\n")
+    monkeypatch.setenv("VULNSCOUT_MCP_SERVER_PATH", str(alternative))
+    monkeypatch.setattr(copilot_settings, "MCP_SCRIPT", tmp_path / "missing-server.py")
+    response = web.post("/api/copilot-assessments", json=scope)
+    assert response.status_code == 503
+    assert "mcp" in response.get_json()["errors"]
+    assert registry.active() == []
 
 
 def test_pending_requires_explicit_acknowledgement(client, monkeypatch):

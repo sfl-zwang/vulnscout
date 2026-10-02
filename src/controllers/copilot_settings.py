@@ -9,6 +9,7 @@ from pathlib import Path
 
 
 _MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+MCP_SCRIPT = Path(__file__).resolve().parents[2] / "vulnscout_mcp/server.py"
 
 
 def valid_model(model: object) -> bool:
@@ -136,9 +137,8 @@ def check_readiness() -> dict:
     skill = Path(__file__).resolve().parents[2] / ".github/skills/cve-assessment/SKILL.md"
     if not skill.is_file():
         errors["skill"] = "The cve-assessment skill is not installed."
-    mcp = os.getenv("VULNSCOUT_MCP_SERVER_PATH", "")
-    if not mcp or not Path(mcp).expanduser().is_file():
-        errors["mcp"] = "Set VULNSCOUT_MCP_SERVER_PATH to the VulnScout MCP server script."
+    if not MCP_SCRIPT.is_file():
+        errors["mcp"] = "The packaged VulnScout MCP server script is unavailable."
     if token:
         try:
             probe_errors, available_models = asyncio.run(_probe(token, model))

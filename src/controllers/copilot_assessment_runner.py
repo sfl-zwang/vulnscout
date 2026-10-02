@@ -26,12 +26,11 @@ from ..models.project_context import ProjectContext
 from ..models.variant_context import VariantContext
 from .copilot_assessment_contract import CandidateError, Selection
 from .copilot_assessment_write import PendingSnapshot, save_candidates
-from .copilot_settings import configured_model, read_token, valid_model
+from .copilot_settings import MCP_SCRIPT, configured_model, read_token, valid_model
 from .job_context import CancelledError, JobContext, OperationError
 
 logger = logging.getLogger(__name__)
 SOURCE_MOUNT = Path("/scan/project-source")
-MCP_SCRIPT = Path("/scan/vulnscout_mcp/server.py")
 SKILL_DIR = Path(__file__).resolve().parents[2] / ".github/skills/cve-assessment"
 MAX_SOURCE_BYTES = 128 * 1024
 MAX_OBJECTIVES_BYTES = 128 * 1024

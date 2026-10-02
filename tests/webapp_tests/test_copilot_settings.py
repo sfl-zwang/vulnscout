@@ -131,6 +131,7 @@ def test_model_patch_uses_same_access_guard(client, monkeypatch):
 
 def test_check_reports_independent_failures_without_leaking_token(client, tmp_path, monkeypatch):
     import copilot
+    from src.controllers import copilot_settings
 
     instances = []
 
@@ -154,6 +155,7 @@ def test_check_reports_independent_failures_without_leaking_token(client, tmp_pa
             return [SimpleNamespace(id="gpt-5.4"), SimpleNamespace(id="other-model")]
 
     client.put("/api/config/copilot", json={"token": "github_pat_test", "model": "gpt-5.4"})
+    monkeypatch.setattr(copilot_settings, "MCP_SCRIPT", tmp_path / "missing-server.py")
     monkeypatch.setattr(copilot, "CopilotClient", FakeClient)
     response = client.post("/api/config/copilot/check")
     assert response.status_code == 200
@@ -250,16 +252,32 @@ def test_valid_model_patch_requires_token_and_available_model(client, tmp_path):
     assert "COPILOT_MODEL=gpt-5.4" in (tmp_path / "config.env").read_text()
 
 
-def test_readiness_succeeds_with_runtime_skill_and_mcp(client, tmp_path, monkeypatch):
-    mcp = tmp_path / "run_server.py"
-    mcp.write_text("# test MCP entry point\n")
-    monkeypatch.setenv("VULNSCOUT_MCP_SERVER_PATH", str(mcp))
+def test_readiness_succeeds_with_runtime_skill_and_mcp(client):
+    from src.controllers import copilot_settings
+    from src.controllers.copilot_assessment_runner import MCP_SCRIPT
+
+    assert copilot_settings.MCP_SCRIPT == MCP_SCRIPT
+    assert MCP_SCRIPT.is_file()
     assert client.put("/api/config/copilot", json={
         "token": "github_pat_test", "model": "gpt-5.4"}).status_code == 200
     response = client.post("/api/config/copilot/check")
     assert response.get_json() == {
         "ready": True, "errors": {}, "available_models": ["gpt-5.4"]}
     assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_readiness_rejects_missing_packaged_mcp_even_with_env_path(client, tmp_path, monkeypatch):
+    from src.controllers import copilot_settings
+
+    alternative = tmp_path / "server.py"
+    alternative.write_text("# unrelated script\n")
+    monkeypatch.setenv("VULNSCOUT_MCP_SERVER_PATH", str(alternative))
+    monkeypatch.setattr(copilot_settings, "MCP_SCRIPT", tmp_path / "missing-server.py")
+    assert client.put("/api/config/copilot", json={
+        "token": "github_pat_test", "model": "gpt-5.4"}).status_code == 200
+    response = client.post("/api/config/copilot/check")
+    assert response.get_json()["ready"] is False
+    assert "mcp" in response.get_json()["errors"]
 
 
 def test_cache_directory_symlink_does_not_redirect_secret(client, tmp_path, monkeypatch):
