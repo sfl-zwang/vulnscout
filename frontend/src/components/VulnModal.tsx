@@ -164,6 +164,10 @@ type VariantScopedSnapshot = {
     const [showCopilotPicker, setShowCopilotPicker] = useState(false);
     const [assessmentOperationId, setAssessmentOperationId] = useState<string | null>(null);
     const observedAssessmentIds = useRef<Set<string>>(new Set());
+    // Share generations with the initial fetches so late responses cannot undo a completion refresh.
+    const assessmentListRequest = useRef(0);
+    const assessmentRowsRequest = useRef(0);
+    const completionRefresh = useRef(0);
     const operations = useSyncExternalStore(subscribe, getSnapshot);
     const matchingAssessmentOperations = useMemo(() => operations.filter(op => op.kind === "assessment"
         && op.label === `Assess ${vuln.id}` && op.scope?.project_id === projectId),
@@ -248,12 +252,13 @@ type VariantScopedSnapshot = {
     // its history remains complete when the Explorer is variant-scoped.
     useEffect(() => {
         const controller = new AbortController();
+        const request = ++assessmentListRequest.current;
         setAllVulnAssessments([]);
         const projectQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
         fetch(import.meta.env.VITE_API_URL + `/api/vulnerabilities/${encodeURIComponent(vuln.id)}/assessments${projectQuery}`, { mode: 'cors', signal: controller.signal })
             .then(r => r.json())
             .then((data: any[]) => {
-                if (Array.isArray(data)) {
+                if (!controller.signal.aborted && request === assessmentListRequest.current && Array.isArray(data)) {
                     const fullAssessments = data.flatMap(asAssessment).filter((a): a is Assessment => !Array.isArray(a));
                     const fullById = new Map(fullAssessments.map(a => [a.id, a]));
                     // Keep the Explorer's current scope, but replace its compact
@@ -275,11 +280,12 @@ type VariantScopedSnapshot = {
     // scoped the way the modal is scoped, which is what callers must use to
     // recompute the vulnerability status summary.
     const refreshAllVulnAssessments = useCallback(async (): Promise<Assessment[] | null> => {
+        const request = ++assessmentListRequest.current;
         const projectQuery = projectId ? `?project_id=${encodeURIComponent(projectId)}` : '';
         try {
             const r = await fetch(import.meta.env.VITE_API_URL + `/api/vulnerabilities/${encodeURIComponent(vuln.id)}/assessments${projectQuery}`, { mode: 'cors' });
             const data = await r.json();
-            if (Array.isArray(data)) {
+            if (request === assessmentListRequest.current && Array.isArray(data)) {
                 const fullAssessments = data.flatMap(asAssessment).filter((a): a is Assessment => !Array.isArray(a));
                 const scopedAssessments = variantId
                     ? fullAssessments.filter(a => appliesToVariant(a, variantId))
@@ -299,9 +305,12 @@ type VariantScopedSnapshot = {
     // still pending, empty, or fails, the render below falls back to building
     // rows from allVulnAssessments/vuln.assessments locally so history still renders.
     const refreshAssessmentRows = useCallback(async () => {
+        const request = ++assessmentRowsRequest.current;
         try {
             const rows = await Assessments.listByVuln(vuln.id, projectId);
-            setAssessmentRows(Array.isArray(rows) ? rows : []);
+            if (request === assessmentRowsRequest.current) {
+                setAssessmentRows(Array.isArray(rows) ? rows : []);
+            }
         } catch {
             // Keep whatever was previously loaded; the render's fallback path
             // covers the case where nothing ever loaded successfully.
@@ -310,10 +319,13 @@ type VariantScopedSnapshot = {
 
     useEffect(() => {
         const controller = new AbortController();
+        const request = ++assessmentRowsRequest.current;
         setAssessmentRows([]);
         Assessments.listByVuln(vuln.id, projectId)
             .then(rows => {
-                if (!controller.signal.aborted) setAssessmentRows(Array.isArray(rows) ? rows : []);
+                if (!controller.signal.aborted && request === assessmentRowsRequest.current) {
+                    setAssessmentRows(Array.isArray(rows) ? rows : []);
+                }
             })
             .catch(() => {});
         return () => controller.abort();
@@ -324,7 +336,10 @@ type VariantScopedSnapshot = {
             && !observedAssessmentIds.current.has(op.op_id));
         if (completed.length === 0) return;
         completed.forEach(op => observedAssessmentIds.current.add(op.op_id));
-        void refreshAllVulnAssessments().then(() => refreshAssessmentRows());
+        const refresh = ++completionRefresh.current;
+        void refreshAllVulnAssessments().then(() => {
+            if (refresh === completionRefresh.current) return refreshAssessmentRows();
+        });
         refreshReviews();
     }, [matchingAssessmentOperations, refreshAllVulnAssessments, refreshAssessmentRows, refreshReviews]);
 

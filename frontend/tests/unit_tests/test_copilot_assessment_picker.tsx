@@ -253,4 +253,58 @@ describe('Copilot assessment picker', () => {
         await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Assessment done.'));
         restore();
     });
+
+    it('keeps the latest assessments when completion refreshes resolve out of order', async () => {
+        const stream = new FakeStream();
+        const restore = __setEventSourceFactory(() => stream as unknown as EventSource);
+        const refreshes: Array<(body: string) => void> = [];
+        let deferRefresh = false;
+        let deferredFullRequests = 0;
+        const assessment = (id: string) => ({
+            id, vuln_id: 'CVE-2026-1234', origin: 'ai', status: 'under_investigation',
+            timestamp: '2026-10-02T11:00:00Z', packages: ['openssl@3.0.0'],
+            variant_ids: ['variant-a'], targets: [{ variant_id: 'variant-a', package: 'openssl@3.0.0' }],
+            responses: [], status_notes: 'Pending human approval',
+        });
+        fetchMock.mockResponse(request => {
+            const url = String(request.url);
+            if (url.includes('/variant-active-packages')) return Promise.resolve(JSON.stringify([]));
+            if (url.includes('/variants')) return Promise.resolve(JSON.stringify([variants[0]]));
+            if (url.includes('/assessments')) {
+                if (deferRefresh && deferredFullRequests++ < 2) {
+                    return new Promise(resolve => { refreshes.push(resolve); });
+                }
+                return Promise.resolve(JSON.stringify([]));
+            }
+            return Promise.resolve(JSON.stringify({}));
+        });
+        const vuln = {
+            id: 'CVE-2026-1234', packages: ['openssl@3.0.0'], packages_current: ['openssl@3.0.0'],
+            aliases: [], related_vulnerabilities: [], urls: [], datasource: '', namespace: 'nvd:cve',
+            simplified_status: 'active', assessments: [], texts: [], variants: [], cpes: [], found_by: [],
+            severity: { cvss: [], severity: 'low', min_score: 1, max_score: 1 },
+            epss: { score: 0, percentile: 0 }, fix: { state: 'unknown' },
+            effort: {
+                optimistic: new Iso8601Duration('PT1H'),
+                likely: new Iso8601Duration('PT2H'),
+                pessimistic: new Iso8601Duration('PT3H'),
+            },
+        } as unknown as Vulnerability;
+        render(<VulnModal vuln={vuln} projectId="project-1" variantId="variant-a"
+            onClose={jest.fn()} appendAssessment={jest.fn()} appendCVSS={jest.fn()} patchVuln={jest.fn()} />);
+        await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) =>
+            String(url).includes('/assessments'))).toHaveLength(2));
+        await act(async () => {});
+        deferRefresh = true;
+        stream.send('operation', operation('done', { assessment_ids: ['first-ai-id'] }));
+        await waitFor(() => expect(refreshes).toHaveLength(1));
+        stream.send('operation', { ...operation('done', { assessment_ids: ['second-ai-id'] }),
+            op_id: 'op-2', created_at: '2026-10-02T12:00:00Z' });
+        await waitFor(() => expect(refreshes).toHaveLength(2));
+        await act(async () => { refreshes[1](JSON.stringify([assessment('first-ai-id'), assessment('second-ai-id')])); });
+        await waitFor(() => expect(vuln.assessments.map(a => a.id)).toEqual(['first-ai-id', 'second-ai-id']));
+        await act(async () => { refreshes[0](JSON.stringify([assessment('first-ai-id')])); });
+        expect(vuln.assessments.map(a => a.id)).toEqual(['first-ai-id', 'second-ai-id']);
+        restore();
+    });
 });
