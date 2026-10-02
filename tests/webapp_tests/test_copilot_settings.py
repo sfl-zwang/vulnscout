@@ -1,3 +1,4 @@
+import json
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -48,6 +49,9 @@ def client(monkeypatch, tmp_path):
 
 
 def test_token_stays_private_and_survives_read(client, tmp_path, caplog):
+    from src.controllers.event_bus import operation_events
+
+    previous_seq = operation_events.seq
     with caplog.at_level(logging.DEBUG):
         response = client.put("/api/config/copilot", json={
             "token": "github_pat_test", "model": "gpt-5.4"})
@@ -59,6 +63,9 @@ def test_token_stays_private_and_survives_read(client, tmp_path, caplog):
     assert token_file.read_text() == "github_pat_test"
     assert "github_pat_test" not in (tmp_path / "config.env").read_text()
     assert "github_pat_test" not in caplog.text
+    events = operation_events.replay_since(previous_seq)
+    assert events is not None
+    assert "github_pat_test" not in json.dumps(list(events))
     from src.controllers.copilot_settings import read_token
 
     assert read_token() == "github_pat_test"

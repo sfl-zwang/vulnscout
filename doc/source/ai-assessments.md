@@ -12,6 +12,101 @@ request an AI second opinion on existing user-authored assessments.
 
 ---
 
+## Assess with Copilot from the web interface
+
+The **Assess with Copilot** button runs the packaged Copilot SDK and
+`cve-assessment` skill inside the VulnScout container. No separate Copilot CLI
+or host-side MCP setup is needed for this button. This is distinct from the
+external-agent workflow described below.
+
+1. Restrict port 7275 to local clients (for example, with a host firewall),
+   then run `./vulnscout --config VULNSCOUT_AGENT_ENABLED 1` and restart
+   VulnScout. The wrapper currently publishes port 7275 on all host
+   interfaces, so do **not** rely on the URL alone to restrict access.
+   Docker's default bridge presents requests from the host as its gateway
+   address (often `172.17.0.1`); set
+   `./vulnscout --config VULNSCOUT_AGENT_TRUSTED_CLIENTS 172.17.0.1`
+   **only after** restricting the port. Find your actual gateway with
+   `docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'`
+   and substitute it if different. Then restart again. Open `http://localhost:7275` (not a
+   remote host or alternate hostname). Without a trusted bridge gateway,
+   even host-local requests may receive HTTP 403.
+2. In **Settings → Copilot**, save a supported GitHub personal access token
+   (a classic `ghp_` token or fine-grained `github_pat_` token) from an
+   identity with Copilot access. A fine-grained token needs **Copilot Requests**
+   permission. The token is stored in the mounted cache at
+   `/cache/vulnscout/copilot-token`, not in `config.env`, and survives container
+   restarts as long as that cache volume is retained. Treat the cache as a
+   secret. Use **Check connection** to inspect authentication and available
+   models, then select and save a model in Settings.
+3. Open a vulnerability, click **Assess with Copilot**, choose one observed
+   package for each selected variant, and start. Historical findings may be
+   selected. If a variant already has a pending AI assessment, explicitly
+   acknowledge that it will be replaced (even if it covers a different
+   package). Multiple variants can be assessed together, but only **one
+   package per variant** can be selected per request.
+4. Follow progress in the operation queue. A queued or running assessment
+   can be cancelled **until the final write begins**; cancellation cannot undo
+   an assessment already saved. Results are pending human review: approve or
+   reject them in the vulnerability panel as described below. Completed job
+   history is kept in memory for one hour, not indefinitely or across server
+   restarts.
+
+**Check connection** inspects setup, authentication and model availability;
+it does **not** make a billable assessment/model-inference call and cannot
+guarantee a later assessment succeeds. Running an assessment uses your
+Copilot subscription/allowance and may incur usage charges according to
+your GitHub plan and selected model.
+
+Source inspection is optional and **opt-in**: set
+`VULNSCOUT_SOURCE_ROOT=/absolute/path/to/project` in the host environment
+before starting `./vulnscout --serve`. The wrapper mounts that existing host
+directory read-only at `/scan/project-source`; refer to paths *inside* that
+mount in variant context (`codebase_path`). Without this setting, host project
+sources are not mounted. Changing it while the container is running causes
+the wrapper to restart the container with the requested mount.
+
+To smoke-test a locally built image without a real token:
+
+```bash
+docker build -t vulnscout:copilot-plan-smoke .
+docker run --rm --entrypoint sh vulnscout:copilot-plan-smoke -c \
+  'test -f /scan/.github/skills/cve-assessment/SKILL.md &&
+   test -f /scan/vulnscout_mcp/server.py &&
+   test -x /root/.cache/github-copilot-sdk/cli/1.0.85/prebuilds/linuxmusl-x64/copilot-runtime &&
+   python3 -c "from copilot import CopilotClient" &&
+   test ! -e /scan/project-source'
+
+# A disposable volume simulates two container starts; this is NOT a real token.
+docker volume create vulnscout-copilot-doc-smoke
+docker run --rm -v vulnscout-copilot-doc-smoke:/cache/vulnscout \
+  --entrypoint python3 vulnscout:copilot-plan-smoke -c \
+  'from src.controllers.copilot_settings import save_token; save_token("synthetic-smoke-not-a-real-token")'
+docker run --rm -v vulnscout-copilot-doc-smoke:/cache/vulnscout \
+  --entrypoint python3 vulnscout:copilot-plan-smoke -c \
+  'from src.controllers.copilot_settings import read_token; import os, stat; assert read_token() == "synthetic-smoke-not-a-real-token"; assert stat.S_IMODE(os.stat("/cache/vulnscout/copilot-token").st_mode) == 0o600'
+docker volume rm vulnscout-copilot-doc-smoke
+
+# Explicit project mount is read-only; no project directory is mounted above.
+container=$(docker create --entrypoint sh \
+  -v "$PWD:/scan/project-source:ro" vulnscout:copilot-plan-smoke -c true)
+docker inspect "$container" --format \
+  '{{range .Mounts}}{{if eq .Destination "/scan/project-source"}}{{.RW}}{{end}}{{end}}'
+docker rm "$container"
+```
+
+The binary location above is for the currently pinned SDK/runtime and may
+change on upgrade; `docker inspect` should print `false`. With a real token,
+use **Check connection** before starting an assessment, then approve or reject
+the pending result; this smoke test does not perform live inference. After
+enabling the local endpoints, `curl -i -X POST
+http://localhost:7275/api/config/copilot/check` should return HTTP 200
+(possibly with `ready: false` until the credential and model are set).
+HTTP 403 from the host indicates that the Docker bridge gateway has not been
+trusted; do not work around this by allowing arbitrary remote addresses.
+
+---
+
 ## How it works
 
 Three pieces work together:

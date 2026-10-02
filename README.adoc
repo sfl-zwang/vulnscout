@@ -89,6 +89,38 @@ The VulnScout MCP server source is now vendored in this repository under
 It is launched as a stdio process by MCP clients (for example VS Code /
 Copilot) via `vulnscout_mcp/run_server.py`.
 
+=== Assess with Copilot in the web interface
+
+For local use, first restrict host port 7275 to local clients (the wrapper
+currently publishes it on all interfaces), then run
+`./vulnscout --config VULNSCOUT_AGENT_ENABLED 1`. Docker bridge traffic from
+the host often appears as `172.17.0.1`; after restricting the port, configure
+`./vulnscout --config VULNSCOUT_AGENT_TRUSTED_CLIENTS 172.17.0.1` (use your
+actual bridge gateway if different), restart and open
+`http://localhost:7275`. Without a trusted gateway, local requests may be
+rejected. In *Settings → Copilot*, save
+a GitHub personal access token (classic `ghp_` or fine-grained `github_pat_`
+with *Copilot Requests* permission) for an identity with Copilot access.
+Click *Check connection* to inspect readiness and available models, then
+select and save a model. The check does not call an inference model or
+guarantee later success. The token stays in the persistent cache volume
+(`copilot-token`, not `config.env`); protect that volume.
+
+Open a vulnerability and choose *Assess with Copilot*: select one observed
+package per variant and acknowledge replacement of any existing pending AI
+assessment. Results require human approval before affecting status or VEX.
+Queued/running jobs can be cancelled only before the final write begins;
+completed job history is kept in memory for one hour. Assessments consume
+Copilot usage and may incur charges for the selected model. The Copilot SDK,
+runtime, skill and MCP server are packaged in the image; no separate Copilot
+CLI installation is required.
+
+For optional source inspection, start with
+`VULNSCOUT_SOURCE_ROOT=/absolute/path/to/project ./vulnscout --serve`; the
+directory is mounted read-only at `/scan/project-source`. It is *not* mounted
+by default. See link:doc/source/ai-assessments.md[AI assessments] for setup,
+deployment smoke commands and the external-agent workflow.
+
 ===  Container Lifecycle
 
 The `vulnscout` script manages the container lifecycle. The container runs in the background and accepts commands via `docker exec`.
