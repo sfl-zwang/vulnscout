@@ -19,12 +19,25 @@ The **Assess with Copilot** button runs the packaged Copilot SDK and
 or host-side MCP setup is needed for this button. This is distinct from the
 external-agent workflow described below.
 
-1. Run `./vulnscout --config VULNSCOUT_AGENT_ENABLED 1`, then invoke
+1. For Docker, verify the **server** is version **28.0.0 or newer** with
+   `docker version --format '{{.Server.Version}}'` before enabling the agent.
+   Docker versions older than 28.0.0 can make ports published to loopback
+   reachable by hosts on the same layer-2 network (see Docker's
+   [port-publishing documentation](https://docs.docker.com/engine/network/port-publishing/#publishing-ports)).
+   The wrapper refuses to
+   start or reuse an agent-enabled container on older or unrecognized Docker
+   server versions; ordinary VulnScout without the agent remains available.
+   If you cannot upgrade, do not enable localhost-only agent/Copilot endpoints
+   unless you have separately proven network isolation; the wrapper has
+   no override for this safety check.
+
+   Run `./vulnscout --config VULNSCOUT_AGENT_ENABLED 1`, then invoke
    `./vulnscout --start` to apply the setting. The wrapper publishes port
    7275 on **127.0.0.1 only** and recreates already-running containers
    with a legacy all-interface binding when invoked for a command that
    uses the container (for example, `./vulnscout --serve`). Verify the
-   active binding before trusting a Docker bridge client:
+   active binding **and the Docker server version** before trusting a Docker
+   bridge client:
 
    ```bash
    docker inspect vulnscout --format \
@@ -39,13 +52,15 @@ external-agent workflow described below.
    presents requests from the host as its gateway address (often
    `172.17.0.1`); set
    `./vulnscout --config VULNSCOUT_AGENT_TRUSTED_CLIENTS 172.17.0.1`
-   **only after verifying loopback binding**. Find your actual gateway with
+   **only after confirming Docker >=28.0.0 and verifying loopback binding**
+   (or separately proving network isolation). Find your actual gateway with
    `docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'`
    and substitute it if different. Restart to apply the new setting.
    Open `http://localhost:7275` (not a remote host or alternate hostname).
    Without a trusted bridge gateway, even host-local requests may receive
-   HTTP 403. If using Podman, verify its published port is loopback-only
-   before trusting its gateway.
+   HTTP 403. This Docker-specific version check does not apply to Podman;
+   verify Podman's published port and network isolation before trusting its
+   gateway.
 2. In **Settings → Copilot**, save a supported GitHub personal access token
    (a classic `ghp_` token or fine-grained `github_pat_` token) from an
    identity with Copilot access. A fine-grained token needs **Copilot Requests**

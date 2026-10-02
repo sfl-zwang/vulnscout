@@ -60,9 +60,80 @@ def test_copilot_docs_verify_loopback_and_use_disposable_volume():
     text = (ROOT / "doc/source/ai-assessments.md").read_text()
     assert '.HostConfig.PortBindings "7275/tcp"' in text
     assert "127.0.0.1:7275" in text
+    assert "28.0.0" in text
+    assert "same layer-2 network" in text
+    assert "separately proven" in text
     assert "volume=$(docker volume create)" in text
     assert 'docker volume rm "$volume"' in text
     assert "docker volume create vulnscout-copilot-doc-smoke" not in text
+    readme = (ROOT / "README.adoc").read_text()
+    assert "Docker server >=28.0.0" in readme
+    assert "separately proven" in readme
+
+
+@pytest.mark.parametrize(
+    ("engine", "version", "enabled", "command", "allowed"),
+    [
+        ("docker", "27.5.1", True, "--start", False),
+        ("docker", "27.5.1", True, "--restart", False),
+        ("docker", "27.5.1", True, "--refresh-vulnerability-data", False),
+        ("docker", "28.0.0-rc1", True, "--start", False),
+        ("docker", "unknown", True, "--start", False),
+        ("docker", "28.0.0", True, "--start", True),
+        ("docker", "29.1.0", True, "--refresh-vulnerability-data", True),
+        ("docker", "27.5.1", False, "--start", True),
+        ("podman", "27.5.1", True, "--start", True),
+    ],
+)
+def test_docker_version_gate_for_agent(engine, version, enabled, command, allowed):
+    with tempfile.TemporaryDirectory(dir=ROOT) as workdir:
+        work = Path(workdir)
+        bin_dir = work / "bin"
+        bin_dir.mkdir()
+        executable = bin_dir / engine
+        executable.write_text("""#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$VULNSCOUT_TEST_LOG"
+case "$1" in
+  version)
+    [[ "$VULNSCOUT_TEST_VERSION" != unknown ]] || exit 1
+    echo "$VULNSCOUT_TEST_VERSION" ;;
+  ps) echo vulnscout ;;
+  inspect)
+    if [[ "$*" == *'.HostConfig.PortBindings'* ]]; then
+      echo 127.0.0.1:7275
+    fi ;;
+  rm|run|exec) : ;;
+  *) exit 99 ;;
+esac
+""")
+        executable.chmod(0o755)
+        cache = work / "build" / "cache"
+        cache.mkdir(parents=True)
+        (cache / "config.env").write_text(
+            f"VULNSCOUT_AGENT_ENABLED={int(enabled)}\n"
+        )
+        log = work / "calls.log"
+        env = os.environ.copy()
+        env.update(
+            PATH=f"{bin_dir}:/usr/bin:/bin",
+            VULNSCOUT_BUILD_DIR=str(work / "build"),
+            VULNSCOUT_TEST_LOG=str(log),
+            VULNSCOUT_TEST_VERSION=version,
+        )
+        env.pop("VULNSCOUT_AGENT_ENABLED", None)
+        result = subprocess.run(
+            [str(ROOT / "vulnscout"), command],
+            env=env, capture_output=True, text=True,
+        )
+        assert (result.returncode == 0) == allowed, result.stderr
+        calls = log.read_text().splitlines() if log.exists() else []
+        assert any(line.startswith("version ") for line in calls) == (engine == "docker" and enabled)
+        if not allowed:
+            assert "Docker server >=28.0.0" in result.stderr
+            assert not any(line.startswith(("rm ", "run ")) for line in calls), calls
+        elif command in ("--start", "--restart"):
+            assert any(line.startswith("run -d ") for line in calls), calls
 
 
 @pytest.mark.parametrize(

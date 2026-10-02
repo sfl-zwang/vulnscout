@@ -91,10 +91,18 @@ Copilot) via `vulnscout_mcp/run_server.py`.
 
 === Assess with Copilot in the web interface
 
-For local use, first restrict host port 7275 to local clients (the wrapper
-currently publishes it on all interfaces), then run
-`./vulnscout --config VULNSCOUT_AGENT_ENABLED 1`. Docker bridge traffic from
-the host often appears as `172.17.0.1`; after restricting the port, configure
+For local use with Docker, first require Docker server >=28.0.0
+(`docker version --format '{{.Server.Version}}'`): before 28.0.0, even ports
+published to loopback can be reached by hosts on the same layer-2 network.
+The wrapper refuses agent-enabled startup on older or unknown Docker versions;
+without an upgrade, only enable localhost-only agent/Copilot endpoints if
+network isolation is separately proven (the wrapper has no bypass). Ordinary
+VulnScout without the agent remains available; the Docker version gate does
+not apply to Podman. The wrapper binds port 7275 to 127.0.0.1; confirm the
+active binding as described in link:doc/source/ai-assessments.md[AI assessments].
+Then run `./vulnscout --config VULNSCOUT_AGENT_ENABLED 1`. Docker bridge
+traffic from the host often appears as `172.17.0.1`; only after confirming
+the version and binding, configure
 `./vulnscout --config VULNSCOUT_AGENT_TRUSTED_CLIENTS 172.17.0.1` (use your
 actual bridge gateway if different), restart and open
 `http://localhost:7275`. Without a trusted gateway, local requests may be

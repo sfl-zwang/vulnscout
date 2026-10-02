@@ -190,11 +190,31 @@ container_has_local_port() {
         --format '{{range index .HostConfig.PortBindings "7275/tcp"}}{{.HostIp}}:{{.HostPort}}{{println}}{{end}}' 2>/dev/null)" == "127.0.0.1:7275" ]]
 }
 
+check_agent_docker_version() {
+    [[ "$CONTAINER_ENGINE" == docker ]] || return 0
+    if [[ "${VULNSCOUT_AGENT_ENABLED:-}" != 1 ]] &&
+        ! grep -qx 'VULNSCOUT_AGENT_ENABLED=1' "$VULNSCOUT_CONFIG_FILE" 2>/dev/null; then
+        return 0
+    fi
+
+    local version major
+    version="$(docker version --format '{{.Server.Version}}' 2>/dev/null)" || version=""
+    if [[ "$version" =~ ^([0-9]+)\.[0-9]+\.[0-9]+$ ]]; then
+        major="${BASH_REMATCH[1]}"
+        if (( 10#$major >= 28 )); then
+            return 0
+        fi
+    fi
+    echo "Error: agent endpoints require Docker server >=28.0.0 for localhost-only port publishing (found: ${version:-unknown}). Upgrade Docker or use separately proven network isolation; refusing to start or reuse an agent-enabled container." >&2
+    return 1
+}
+
 ensure_running() {
     if [[ -n "${VULNSCOUT_SOURCE_ROOT:-}" ]] && [[ ! -d "$VULNSCOUT_SOURCE_ROOT" ]]; then
         echo "Source root not found" >&2
         return 1
     fi
+    check_agent_docker_version || return 1
     if ! call_container_engine ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         echo "Container not running, starting..."
         do_start
@@ -258,6 +278,7 @@ do_start() {
         [[ -d "$VULNSCOUT_SOURCE_ROOT" ]] || { echo "Source root not found" >&2; exit 1; }
         VULNSCOUT_SOURCE_ROOT="$(readlink -f "$VULNSCOUT_SOURCE_ROOT")"
     fi
+    check_agent_docker_version || return 1
     call_container_engine rm -f "$CONTAINER_NAME" 2>/dev/null || true
     mkdir -p "$VULNSCOUT_CACHE_DIR" "$VULNSCOUT_OUTPUTS_DIR" "$(dirname "$VULNSCOUT_CONFIG_FILE")"
 
@@ -523,7 +544,6 @@ parse_and_run() {
             stop|--stop)
                 call_container_engine rm -f "$CONTAINER_NAME"; shift ;;
             restart|--restart)
-                call_container_engine rm -f "$CONTAINER_NAME" 2>/dev/null || true
                 do_start
                 if [ "$DEV_MODE" = true ]; then
                     start_frontend_dev
