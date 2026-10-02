@@ -76,6 +76,7 @@ class JobContext:
                 return False
             self._cancellation_sealed = True
             self._on_cancel = None
+            registry.update(self.op_id, cancellable=False)
             return True
 
     def is_cancelled(self) -> bool:

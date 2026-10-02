@@ -31,6 +31,7 @@ from flask import Flask
 
 from .job_context import CancelledError, JobContext, OperationError
 from .operation_registry import (
+    LANE_ASSESSMENT,
     LANE_EXPORT,
     LANE_PIPELINE,
     LANE_UPLOAD,
@@ -133,6 +134,7 @@ class OperationQueue:
             LANE_PIPELINE: _Lane(LANE_PIPELINE, 1),
             LANE_EXPORT: _Lane(LANE_EXPORT, 2),
             LANE_UPLOAD: _Lane(LANE_UPLOAD, None),
+            LANE_ASSESSMENT: _Lane(LANE_ASSESSMENT, 1),
         }
 
     def init_app(self, app: Flask) -> None:
@@ -158,7 +160,8 @@ class OperationQueue:
         for lane in self._lanes.values():
             pending = lane.take_pending(op_id)
             if pending is not None:
-                pending.ctx.request_cancel()
+                if not pending.ctx.request_cancel():
+                    return False
                 registry.update(
                     op_id,
                     status=STATUS_CANCELLED,

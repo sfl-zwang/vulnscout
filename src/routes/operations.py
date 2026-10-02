@@ -359,6 +359,10 @@ def _enqueue_exclusively(planned: List[dict]) -> Tuple[str, List[dict]]:
 
 def _cancel_operation_response(op_id: str) -> ResponseReturnValue:
     operation = registry.get(op_id)
+    if operation is not None and operation["kind"] == "assessment":
+        from ._agent_access import access_error
+        if error := access_error():
+            return error
     if operation is not None and not operation.get("cancellable", False):
         return jsonify({"error": "This operation does not support cancellation"}), 409
     if queue.cancel(op_id):

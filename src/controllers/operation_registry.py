@@ -33,10 +33,12 @@ KIND_REFRESH = "refresh"
 KIND_UPLOAD = "upload"
 KIND_EXPORT = "export"
 KIND_ENRICHMENT = "enrichment"
+KIND_ASSESSMENT = "assessment"
 
 LANE_PIPELINE = "pipeline"
 LANE_EXPORT = "export"
 LANE_UPLOAD = "upload"
+LANE_ASSESSMENT = "assessment"
 
 STATUS_QUEUED = "queued"
 STATUS_RUNNING = "running"
@@ -193,6 +195,25 @@ class OperationRegistry:
         with self._lock:
             operation = self._operations.get(op_id)
             return operation is not None and operation["status"] in ACTIVE_STATUSES
+
+    def create_assessment_if_available(
+        self, op_id: str, label: str, project_id: str, selection_key: str,
+    ) -> bool:
+        """Reserve a selection across concurrent start requests in one registry lock."""
+        with self._lock:
+            if any(
+                op["kind"] == KIND_ASSESSMENT
+                and op["status"] in ACTIVE_STATUSES
+                and op["options"].get("selection_key") == selection_key
+                for op in self._operations.values()
+            ):
+                return False
+            self.create(
+                op_id, kind=KIND_ASSESSMENT, source="copilot", label=label,
+                lane=LANE_ASSESSMENT, scope={"project_id": project_id},
+                options={"selection_key": selection_key}, cancellable=True,
+            )
+            return True
 
 
 def new_queue_id() -> str:
