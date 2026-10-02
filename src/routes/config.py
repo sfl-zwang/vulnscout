@@ -10,6 +10,8 @@ from ..controllers.projects import ProjectController
 from ..controllers.variants import VariantController
 from ..controllers.nvd_db import NVD_DB
 from ..helpers.verbose import verbose
+from ..controllers import copilot_settings
+from ._agent_access import access_error
 
 _CONFIG_FILE_DEFAULT = '/etc/vulnscout/config.env'
 _EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
@@ -104,6 +106,7 @@ def init_app(app):
             "client_name": client_name,
             "contact_email": contact_email,
             "grype_memlimit": grype_memlimit,
+            "copilot_model": copilot_settings.configured_model(),
         })
 
     @app.route('/api/config', methods=['PATCH'])
@@ -118,6 +121,9 @@ def init_app(app):
         data = request.get_json(silent=True)
         if not isinstance(data, dict):
             return jsonify({"error": "Expected a JSON object body."}), 400
+        if "copilot_model" in data:
+            if error := access_error():
+                return error
 
         allowed_keys = {
             "product_name": "PRODUCT_NAME",
@@ -125,6 +131,7 @@ def init_app(app):
             "client_name": "CLIENT_NAME",
             "contact_email": "CONTACT_EMAIL",
             "grype_memlimit": "GRYPE_MEMLIMIT",
+            "copilot_model": "COPILOT_MODEL",
         }
 
         for key in data.keys():
@@ -143,6 +150,17 @@ def init_app(app):
                 return jsonify({"error": f"Invalid value for '{key}': expected string."}), 400
 
             normalized_value = value.strip()
+            if key == "copilot_model" and normalized_value and not copilot_settings.valid_model(normalized_value):
+                return jsonify({"error": "Invalid Copilot model ID."}), 400
+            if key == "copilot_model" and normalized_value:
+                try:
+                    token = copilot_settings.read_token()
+                except (OSError, ValueError, UnicodeError):
+                    return jsonify({"error": "Copilot credential file is invalid."}), 500
+                if not token:
+                    return jsonify({"error": "Configure a Copilot token before selecting a model."}), 400
+                if model_error := copilot_settings.model_access_error(token, normalized_value):
+                    return jsonify({"error": model_error}), 400
 
             if key == "contact_email" and normalized_value:
                 if not _EMAIL_RE.match(normalized_value):
@@ -184,6 +202,87 @@ def init_app(app):
             written_env_keys.append(env_key)
 
         return get_config()
+
+    def _copilot_response():
+        try:
+            has_token = bool(copilot_settings.read_token())
+        except (OSError, ValueError, UnicodeError):
+            return jsonify({"error": "Copilot credential file is invalid or inaccessible."}), 500
+        response = jsonify({
+            "has_token": has_token,
+            "masked_token": "********" if has_token else "",
+            "model": copilot_settings.configured_model(),
+        })
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.route('/api/config/copilot', methods=['GET'])
+    def get_copilot():
+        if error := access_error():
+            return error
+        return _copilot_response()
+
+    @app.route('/api/config/copilot', methods=['PUT'])
+    def put_copilot():
+        if error := access_error():
+            return error
+        data = request.get_json(silent=True)
+        if not isinstance(data, dict) or not data or set(data) - {"token", "model"}:
+            return jsonify({"error": "Expected a Copilot token or model."}), 400
+        token = data.get("token")
+        model = data.get("model")
+        if "token" in data and (
+            not isinstance(token, str) or not token or len(token) > 4096
+            or "\n" in token or "\r" in token
+        ):
+            return jsonify({"error": "Invalid Copilot token."}), 400
+        if "model" in data and not copilot_settings.valid_model(model):
+            return jsonify({"error": "Invalid Copilot model ID."}), 400
+        if "model" in data:
+            try:
+                credential = token if isinstance(token, str) else copilot_settings.read_token()
+            except (OSError, ValueError, UnicodeError):
+                return jsonify({"error": "Copilot credential file is invalid."}), 500
+            if not credential:
+                return jsonify({"error": "Configure a Copilot token before selecting a model."}), 400
+            assert isinstance(model, str)
+            if model_error := copilot_settings.model_access_error(credential, model):
+                return jsonify({"error": model_error}), 400
+        if "token" in data:
+            try:
+                copilot_settings.read_token()
+            except (OSError, ValueError, UnicodeError):
+                return jsonify({"error": "Copilot credential file is invalid."}), 500
+        if "model" in data and not _write_config_key("COPILOT_MODEL", model):
+            return jsonify({"error": "Could not persist Copilot model."}), 500
+        try:
+            if "token" in data:
+                assert isinstance(token, str)
+                copilot_settings.save_token(token)
+        except (OSError, ValueError):
+            return jsonify({"error": "Could not persist Copilot token securely."}), 500
+        if "model" in data:
+            assert isinstance(model, str)
+            os.environ["COPILOT_MODEL"] = model
+        return _copilot_response()
+
+    @app.route('/api/config/copilot', methods=['DELETE'])
+    def delete_copilot():
+        if error := access_error():
+            return error
+        try:
+            copilot_settings.remove_token()
+        except (OSError, ValueError):
+            return jsonify({"error": "Could not remove Copilot token securely."}), 500
+        return _copilot_response()
+
+    @app.route('/api/config/copilot/check', methods=['POST'])
+    def check_copilot():
+        if error := access_error():
+            return error
+        response = jsonify(copilot_settings.check_readiness())
+        response.headers["Cache-Control"] = "no-store"
+        return response
 
     @app.route('/api/config/nvd-api-key', methods=['GET'])
     def get_nvd_api_key():
