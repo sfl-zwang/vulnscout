@@ -5,6 +5,8 @@
 
 import json
 import os
+from pathlib import Path
+from threading import Event, Thread, current_thread
 from uuid import uuid4
 
 import pytest
@@ -182,3 +184,69 @@ def test_stale_exact_pair_blocks_all_writes(app):
     with pytest.raises(CandidateError, match="observed"):
         save_candidates(selection, parsed, pending_snapshot(selection))
     assert ai_rows() == []
+
+
+def test_concurrent_saves_reject_snapshot_from_before_other_commit(monkeypatch):
+    from src.bin.webapp import create_app
+    from src.controllers import copilot_assessment_write as writer
+
+    path = Path.cwd() / f".copilot-assessment-concurrency-{uuid4().hex}.db"
+    os.environ["FLASK_SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{path}"
+    first_snapshot = Event()
+    second_snapshot = Event()
+    first_done = Event()
+    results = {}
+    original_snapshot = writer.pending_snapshot
+
+    def coordinated_snapshot(selection):
+        snapshot = original_snapshot(selection)
+        if current_thread().name == "first-save":
+            first_snapshot.set()
+            second_snapshot.wait(1)
+        elif current_thread().name == "second-save":
+            second_snapshot.set()
+            assert first_done.wait(5), "first save did not complete"
+        return snapshot
+
+    try:
+        application = create_app()
+        application.config.update(TESTING=True, SCAN_FILE="/dev/null")
+        with application.app_context():
+            db.create_all()
+            project = uuid4()
+            target = observed(project, "openssl")
+            selection = selection_for(project, target)
+            parsed = candidates(selection, group(target))
+            before = pending_snapshot(selection)
+            db.session.remove()
+
+        monkeypatch.setattr(writer, "pending_snapshot", coordinated_snapshot)
+
+        def save(name):
+            with application.app_context():
+                try:
+                    results[name] = save_candidates(selection, parsed, before)
+                except Exception as exc:
+                    results[name] = exc
+                finally:
+                    if name == "first":
+                        first_done.set()
+
+        first = Thread(target=save, args=("first",), name="first-save")
+        second = Thread(target=save, args=("second",), name="second-save")
+        first.start()
+        assert first_snapshot.wait(5), "first save did not reach snapshot"
+        second.start()
+        first.join(timeout=10)
+        second.join(timeout=10)
+        assert not first.is_alive() and not second.is_alive()
+        assert isinstance(results["first"], list), results["first"]
+        assert isinstance(results["second"], PendingConflict), results["second"]
+        with application.app_context():
+            assert len(ai_rows()) == 1
+            db.drop_all()
+            db.engine.dispose()
+    finally:
+        os.environ.pop("FLASK_SQLALCHEMY_DATABASE_URI", None)
+        for suffix in ("", "-wal", "-shm"):
+            path.with_name(path.name + suffix).unlink(missing_ok=True)

@@ -8,7 +8,7 @@ import json
 from dataclasses import dataclass, replace
 from uuid import UUID
 
-from ..extensions import batch_session
+from ..extensions import batch_session, db, write_lock
 from ..models.assessment import Assessment
 from ..models.assessment_review import fingerprint_assessment
 from ..models.variant import Variant
@@ -112,12 +112,19 @@ def save_candidates(
         ))
         for members in grouped.values()
     ]
-    with batch_session():
-        resolved = [(dto_for(selection, group), exact_findings(selection, group))
-                    for group in groups]
-        if pending_snapshot(selection) != expected_snapshot:
-            raise PendingConflict("Pending AI work changed during assessment")
-        _replace_pending_ai(selection.vuln_id, [target.variant_id for target in selection.targets])
-        created = [create_assessment_record(dto, targets, origin="ai", commit=False)
-                   for dto, targets in resolved]
-        return [str(row.id) for row in created]
+    with write_lock():
+        with batch_session():
+            if db.engine.dialect.name == "sqlite":
+                # Reserve the writer slot across processes before reading pending work.
+                connection = db.session.connection()
+                if connection.connection.driver_connection.in_transaction:
+                    raise RuntimeError("Copilot save requires a fresh SQLite transaction")
+                connection.exec_driver_sql("BEGIN IMMEDIATE")
+            resolved = [(dto_for(selection, group), exact_findings(selection, group))
+                        for group in groups]
+            if pending_snapshot(selection) != expected_snapshot:
+                raise PendingConflict("Pending AI work changed during assessment")
+            _replace_pending_ai(selection.vuln_id, [target.variant_id for target in selection.targets])
+            created = [create_assessment_record(dto, targets, origin="ai", commit=False)
+                       for dto, targets in resolved]
+            return [str(row.id) for row in created]
