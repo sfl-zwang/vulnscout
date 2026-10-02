@@ -165,9 +165,12 @@ type VariantScopedSnapshot = {
     const [assessmentOperationId, setAssessmentOperationId] = useState<string | null>(null);
     const observedAssessmentIds = useRef<Set<string>>(new Set());
     const operations = useSyncExternalStore(subscribe, getSnapshot);
-    const assessmentOperation = operations.find(op => op.kind === "assessment"
-        && (op.op_id === assessmentOperationId
-            || (op.label === `Assess ${vuln.id}` && op.scope?.project_id === projectId)));
+    const matchingAssessmentOperations = useMemo(() => operations.filter(op => op.kind === "assessment"
+        && op.label === `Assess ${vuln.id}` && op.scope?.project_id === projectId),
+    [operations, vuln.id, projectId]);
+    const assessmentOperation = assessmentOperationId
+        ? matchingAssessmentOperations.find(op => op.op_id === assessmentOperationId)
+        : matchingAssessmentOperations.at(-1);
     // True once the active-SBOM package list has been fetched for every variant,
     // so deprecated packages can reliably be split into their own table.
     const [variantPackageMapLoaded, setVariantPackageMapLoaded] = useState(false);
@@ -317,12 +320,13 @@ type VariantScopedSnapshot = {
     }, [vuln.id, projectId]);
 
     useEffect(() => {
-        if (!assessmentOperation || assessmentOperation.status !== "done"
-            || observedAssessmentIds.current.has(assessmentOperation.op_id)) return;
-        observedAssessmentIds.current.add(assessmentOperation.op_id);
+        const completed = matchingAssessmentOperations.filter(op => op.status === "done"
+            && !observedAssessmentIds.current.has(op.op_id));
+        if (completed.length === 0) return;
+        completed.forEach(op => observedAssessmentIds.current.add(op.op_id));
         void refreshAllVulnAssessments().then(() => refreshAssessmentRows());
         refreshReviews();
-    }, [assessmentOperation, refreshAllVulnAssessments, refreshAssessmentRows, refreshReviews]);
+    }, [matchingAssessmentOperations, refreshAllVulnAssessments, refreshAssessmentRows, refreshReviews]);
 
     // In all-variants mode, default to all variant targets for custom CVSS/time edits.
     useEffect(() => {

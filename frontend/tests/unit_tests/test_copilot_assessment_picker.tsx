@@ -169,4 +169,88 @@ describe('Copilot assessment picker', () => {
         await waitFor(() => expect(vuln.assessments.map(a => a.id)).toContain('new-ai-id'));
         restore();
     });
+
+    it('refreshes each successive same-CVE completion and prefers the newly launched operation after reopening', async () => {
+        const stream = new FakeStream();
+        const restore = __setEventSourceFactory(() => stream as unknown as EventSource);
+        let assessmentIds: string[] = [];
+        let nextOperationId = 'op-1';
+        fetchMock.mockResponse(request => {
+            const url = String(request.url);
+            if (url.includes('/variant-active-packages')) return Promise.resolve(JSON.stringify([
+                { variant_id: 'variant-a', active_packages: ['openssl@3.0.0'], findings: [
+                    { finding_id: 'finding-a1', package: 'openssl@3.0.0', outdated: false },
+                ] },
+            ]));
+            if (url.includes('/variants')) return Promise.resolve(JSON.stringify([variants[0]]));
+            if (url.includes('/copilot-assessments')) return Promise.resolve(JSON.stringify({ op_id: nextOperationId }));
+            if (url.includes('/assessments')) return Promise.resolve(JSON.stringify(assessmentIds.map(id => ({
+                id, vuln_id: 'CVE-2026-1234', origin: 'ai', status: 'under_investigation',
+                timestamp: '2026-10-02T11:00:00Z', packages: ['openssl@3.0.0'],
+                variant_ids: ['variant-a'], targets: [{ variant_id: 'variant-a', package: 'openssl@3.0.0' }],
+                responses: [], status_notes: 'Pending human approval',
+            }))));
+            return Promise.resolve(JSON.stringify({}));
+        });
+        const vuln = {
+            id: 'CVE-2026-1234', packages: ['openssl@3.0.0'], packages_current: ['openssl@3.0.0'],
+            aliases: [], related_vulnerabilities: [], urls: [], datasource: '', namespace: 'nvd:cve',
+            simplified_status: 'active',
+            assessments: [], texts: [], variants: [], cpes: [], found_by: [],
+            severity: { cvss: [], severity: 'low', min_score: 1, max_score: 1 },
+            epss: { score: 0, percentile: 0 }, fix: { state: 'unknown' },
+            effort: {
+                optimistic: new Iso8601Duration('PT1H'),
+                likely: new Iso8601Duration('PT2H'),
+                pessimistic: new Iso8601Duration('PT3H'),
+            },
+        } as unknown as Vulnerability;
+        const modal = () => <VulnModal vuln={vuln} projectId="project-1" variantId="variant-a"
+            onClose={jest.fn()} appendAssessment={jest.fn()} appendCVSS={jest.fn()} patchVuln={jest.fn()} />;
+        const launch = async () => {
+            const user = userEvent.setup();
+            await user.click(await screen.findByRole('button', { name: 'Assess with Copilot' }));
+            await user.selectOptions(screen.getByLabelText('Package for variant A'), 'openssl@3.0.0');
+            const replacePending = screen.queryByRole('checkbox', { name: /replace pending/i });
+            if (replacePending) await user.click(replacePending);
+            await user.click(screen.getByRole('button', { name: 'Start assessment' }));
+            await waitFor(() => expect(screen.getByText(/assessment queued/i)).toBeInTheDocument());
+        };
+
+        const firstView = render(modal());
+        await launch();
+        stream.send('operation', operation('running'));
+        assessmentIds = ['first-ai-id'];
+        stream.send('operation', operation('done', { assessment_ids: ['first-ai-id'] }));
+        await waitFor(() => expect(vuln.assessments.map(a => a.id)).toContain('first-ai-id'));
+        firstView.unmount();
+
+        const secondView = render(modal());
+        await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Assessment done.'));
+        nextOperationId = 'op-2';
+        await launch();
+        stream.send('operation', { ...operation('running'), op_id: 'op-2', created_at: '2026-10-02T12:00:00Z' });
+        await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Assessment running.'));
+        const beforeSecond = fetchMock.mock.calls.filter(([url]) =>
+            String(url).includes('/assessments') && !String(url).includes('/copilot-assessments')).length;
+        assessmentIds = ['first-ai-id', 'second-ai-id'];
+        const secondDone = { ...operation('done', { assessment_ids: ['second-ai-id'] }),
+            op_id: 'op-2', created_at: '2026-10-02T12:00:00Z' };
+        stream.send('operation', secondDone);
+        await waitFor(() => expect(vuln.assessments.map(a => a.id)).toContain('second-ai-id'));
+        await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Assessment done.'));
+        await waitFor(() => expect(fetchMock.mock.calls.filter(([url]) =>
+            String(url).includes('/assessments') && !String(url).includes('/copilot-assessments'))).toHaveLength(beforeSecond + 2));
+        const afterSecond = fetchMock.mock.calls.filter(([url]) =>
+            String(url).includes('/assessments') && !String(url).includes('/copilot-assessments')).length;
+        stream.send('operation', secondDone);
+        expect(fetchMock.mock.calls.filter(([url]) =>
+            String(url).includes('/assessments') && !String(url).includes('/copilot-assessments'))).toHaveLength(afterSecond);
+
+        secondView.unmount();
+        render(modal());
+        await waitFor(() => expect(vuln.assessments.map(a => a.id)).toContain('second-ai-id'));
+        await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Assessment done.'));
+        restore();
+    });
 });

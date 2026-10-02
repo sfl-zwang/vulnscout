@@ -38,7 +38,7 @@ export default function OperationQueuePanel({
     const { status, label, scope, progress, logs } = operation;
     const pct = percentOf(operation);
     const hasProgressContent = logs.length > 0 || progress.total > 0 || progress.current > 0;
-    const isActivelyRunning = status === "running" && hasProgressContent;
+    const isActivelyRunning = status === "running" && (hasProgressContent || operation.kind === "assessment");
     const expandsForStatus = isActivelyRunning || status === "error";
     const [isOpen, setIsOpen] = useState(expandsForStatus);
     const contentId = useId();

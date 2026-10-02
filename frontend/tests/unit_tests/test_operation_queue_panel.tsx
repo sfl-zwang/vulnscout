@@ -89,6 +89,21 @@ describe('OperationQueuePanel', () => {
         expect(screen.getByText('Scanning package metadata')).toBeInTheDocument();
     });
 
+    it('shows a logless running Copilot assessment as in progress', () => {
+        render(<OperationQueuePanel
+            operation={makeOperation('running', {
+                kind: 'assessment', lane: 'assessment', label: 'Assess CVE-2026-1234',
+                scope: { project_id: 'project-1' },
+                progress: { current: 0, total: 0, message: '' }, logs: [],
+            })}
+            icon={faCircleInfo}
+            colors={colors}
+            onDismiss={jest.fn()}
+        />);
+        expect(screen.getByRole('button', { name: /Assess CVE-2026-1234 – Copilot in progress/i }))
+            .toBeInTheDocument();
+    });
+
     it('shows the queued state without a dismiss button', () => {
         render(
             <OperationQueuePanel
