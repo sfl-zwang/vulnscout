@@ -54,6 +54,7 @@ def create_assessment_record(
     timestamp: datetime | None = None,
     origin: str = "custom",
     responses: "list[str] | None" = None,
+    commit: bool = True,
 ) -> "DBAssessment":
     """Create a single DBAssessment row from a validated DTO and target set.
 
@@ -77,9 +78,41 @@ def create_assessment_record(
             list(responses) if responses is not None
             else (list(assessment.responses) if assessment.responses else [])
         ),
-        commit=True,
+        commit=commit,
         timestamp=timestamp,
     )
+
+
+def _replace_pending_ai(vuln_id: str, variant_ids: list[UUID]) -> list[dict[str, Any]]:
+    """Make room for a new AI assessment on *variant_ids* by removing the old one.
+
+    A new AI assessment replaces any pending AI assessment (``origin == "ai"``)
+    on the same (vulnerability, variant), whatever its packages. Only the
+    overlapping variants are taken away: a pending assessment that also covers
+    other variants keeps those targets (``trimmed``) and is deleted only once
+    no target remains (``deleted``). Approved (``custom``) and SBOM
+    assessments are never touched.
+
+    Does not commit; call it inside ``batch_session`` together with the create
+    so a failed write leaves the old assessment intact.
+    """
+    replacing = set(variant_ids)
+    replaced: list[dict[str, Any]] = []
+    for row in DBAssessment.get_by_vulnerability(vuln_id):
+        if row.origin != "ai":
+            continue
+        overlap = [t for t in row.target_rows if t.variant_id in replacing]
+        if not overlap:
+            continue
+        removed = sorted({str(t.variant_id) for t in overlap})
+        if len(overlap) == len(row.target_rows):
+            replaced.append({"id": str(row.id), "action": "deleted", "variant_ids": removed})
+            row.delete()
+        else:
+            for target in overlap:
+                row.target_rows.remove(target)
+            replaced.append({"id": str(row.id), "action": "trimmed", "variant_ids": removed})
+    return replaced
 
 
 @dataclass(frozen=True)
