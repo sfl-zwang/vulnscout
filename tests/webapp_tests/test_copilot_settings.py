@@ -303,3 +303,34 @@ def test_token_save_failure_preserves_active_and_persisted_model(client, tmp_pat
     assert client.get("/api/config").get_json()["copilot_model"] == "gpt-5.4"
     assert client.get("/api/config/copilot").get_json()["model"] == "gpt-5.4"
     assert copilot_settings.read_token() == "github_pat_test"
+
+
+@pytest.mark.parametrize("previous_token", [True, False])
+def test_model_write_failure_restores_previous_credentials_and_model(
+    client, tmp_path, monkeypatch, caplog, previous_token,
+):
+    from src.controllers import copilot_settings
+    from src.routes import config
+
+    assert client.put("/api/config/copilot", json={
+        "token": "github_pat_test", "model": "gpt-5.4"}).status_code == 200
+    if not previous_token:
+        assert client.delete("/api/config/copilot").status_code == 200
+    config_file = tmp_path / "config.env"
+    original_config = config_file.read_text()
+    monkeypatch.setattr(copilot_settings, "model_access_error", lambda *_: None)
+    monkeypatch.setattr(config, "_write_config_key", lambda *_: False)
+
+    with caplog.at_level(logging.DEBUG):
+        response = client.put("/api/config/copilot", json={
+            "token": "github_pat_new", "model": "other-model"})
+
+    assert response.status_code == 500
+    assert copilot_settings.read_token() == ("github_pat_test" if previous_token else None)
+    assert (tmp_path / "copilot-token").exists() is previous_token
+    assert config_file.read_text() == original_config
+    assert client.get("/api/config").get_json()["copilot_model"] == "gpt-5.4"
+    assert client.get("/api/config/copilot").get_json()["model"] == "gpt-5.4"
+    for secret in ("github_pat_test", "github_pat_new"):
+        assert secret not in response.get_data(as_text=True)
+        assert secret not in caplog.text

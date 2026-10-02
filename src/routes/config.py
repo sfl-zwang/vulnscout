@@ -248,9 +248,10 @@ def init_app(app):
             assert isinstance(model, str)
             if model_error := copilot_settings.model_access_error(credential, model):
                 return jsonify({"error": model_error}), 400
+        previous_token = None
         if "token" in data:
             try:
-                copilot_settings.read_token()
+                previous_token = copilot_settings.read_token()
             except (OSError, ValueError, UnicodeError):
                 return jsonify({"error": "Copilot credential file is invalid."}), 500
         try:
@@ -260,6 +261,14 @@ def init_app(app):
         except (OSError, ValueError):
             return jsonify({"error": "Could not persist Copilot token securely."}), 500
         if "model" in data and not _write_config_key("COPILOT_MODEL", model):
+            if "token" in data:
+                try:
+                    if previous_token is None:
+                        copilot_settings.remove_token()
+                    else:
+                        copilot_settings.save_token(previous_token)
+                except (OSError, ValueError):
+                    return jsonify({"error": "Could not restore Copilot token after model write failed."}), 500
             return jsonify({"error": "Could not persist Copilot model."}), 500
         if "model" in data:
             assert isinstance(model, str)
