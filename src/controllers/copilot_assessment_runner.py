@@ -26,7 +26,7 @@ from ..models.project_context import ProjectContext
 from ..models.variant_context import VariantContext
 from .copilot_assessment_contract import CandidateError, Selection
 from .copilot_assessment_write import PendingSnapshot, save_candidates
-from .copilot_settings import MCP_SCRIPT, read_token, valid_model
+from .copilot_settings import MCP_SCRIPT, READ_MCP, _probe_read_tools, read_token, valid_model
 from .job_context import CancelledError, JobContext, OperationError
 
 logger = logging.getLogger(__name__)
@@ -35,11 +35,6 @@ SKILL_DIR = Path(__file__).resolve().parents[2] / ".github/skills/cve-assessment
 MAX_SOURCE_BYTES = 128 * 1024
 MAX_OBJECTIVES_BYTES = 128 * 1024
 MAX_ADVISORY_BYTES = 256 * 1024
-READ_MCP = (
-    "get_vulnerability", "get_merged_context", "get_project_context",
-    "get_custom_assessment", "list_custom_assessments", "get_assessment",
-    "list_assessments_by_vuln",
-)
 CUSTOM_READ = ("read_project_file", "search_project_text", "fetch_advisory")
 READ_TOOLS = frozenset(CUSTOM_READ + tuple(f"mcp:vulnscout-{name}" for name in READ_MCP))
 ADVISORY_HOSTS = frozenset((
@@ -415,6 +410,9 @@ def run_assessment(
         raise OperationError("Select exactly one package per variant")
     if not SKILL_DIR.joinpath("SKILL.md").is_file() or not MCP_SCRIPT.is_file():
         raise OperationError("Required Copilot skill or read-only MCP server is unavailable")
+    # Copilot may not emit MCP connection events until after the first model call.
+    if not _probe_read_tools():
+        raise OperationError("Required read-only Copilot context tools are unavailable")
     contexts = [_context_for(selection, target.variant_id) for target in selection.targets]
     roots = tuple(root for context in contexts for root in _source_roots(context.get("codebase_path")))
     default_objectives, objectives_by_variant = _load_objectives(contexts, selection)

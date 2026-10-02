@@ -1,17 +1,28 @@
 """Instance Copilot credentials and headless assessment readiness."""
 
 import asyncio
+import logging
 import os
 import re
 import secrets
 import stat
+import sys
 from pathlib import Path
+from urllib.parse import urlsplit
 
 import httpx
+from mcp import ClientSession, StdioServerParameters, types
+from mcp.client.stdio import stdio_client
 
 
 _MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
+logger = logging.getLogger(__name__)
 MCP_SCRIPT = Path(__file__).resolve().parents[2] / "vulnscout_mcp/server.py"
+READ_MCP = (
+    "get_vulnerability", "get_merged_context", "get_project_context",
+    "get_custom_assessment", "list_custom_assessments", "get_assessment",
+    "list_assessments_by_vuln",
+)
 
 
 def valid_model(model: object) -> bool:
@@ -101,12 +112,40 @@ def model_access_error(token: str, model: str) -> str | None:
     return errors.get("authentication") or errors.get("model")
 
 
+async def _probe_mcp_tools(base_url: str) -> bool:
+    params = StdioServerParameters(
+        command=sys.executable, args=[str(MCP_SCRIPT)], env={"VULNSCOUT_BASE_URL": base_url},
+    )
+    async with asyncio.timeout(8):
+        with open(os.devnull, "w") as errlog:
+            async with stdio_client(params, errlog=errlog) as (read, write):
+                async with ClientSession(read, write) as session:
+                    await session.initialize()
+                    names: set[str] = set()
+                    cursor = None
+                    while True:
+                        result = await session.list_tools(
+                            params=types.PaginatedRequestParams(cursor=cursor) if cursor else None,
+                        )
+                        names.update(tool.name for tool in result.tools)
+                        cursor = result.next_cursor
+                        if not cursor:
+                            return set(READ_MCP) <= names
+
+
 def _probe_read_tools() -> bool:
     base_url = os.getenv("VULNSCOUT_AGENT_API_URL", "http://localhost:7275").rstrip("/")
     try:
+        parsed = urlsplit(base_url)
+        if (parsed.scheme not in ("http", "https") or not parsed.hostname
+                or parsed.username or parsed.password or parsed.query or parsed.fragment):
+            return False
         response = httpx.get(f"{base_url}/api/projects", timeout=2.0, follow_redirects=False)
-        return response.status_code == 200 and isinstance(response.json(), list)
-    except (httpx.HTTPError, ValueError):
+        if response.status_code != 200 or not isinstance(response.json(), list):
+            return False
+        return asyncio.run(_probe_mcp_tools(base_url))
+    except (httpx.HTTPError, ValueError, OSError, TimeoutError, ExceptionGroup) as error:
+        logger.warning("Read-only MCP preflight failed (%s)", type(error).__name__)
         return False
 
 
@@ -152,8 +191,8 @@ def check_readiness() -> dict:
         errors["mcp"] = "The packaged VulnScout MCP server script is unavailable."
     elif not _probe_read_tools():
         errors["mcp"] = (
-            "VulnScout read tools are unreachable. Check VULNSCOUT_AGENT_API_URL "
-            "and that its read-only /api/projects endpoint is available."
+            "VulnScout read-only MCP tools are unavailable. Check VULNSCOUT_AGENT_API_URL "
+            "and the packaged MCP server."
         )
     if token:
         try:

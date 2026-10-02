@@ -97,6 +97,7 @@ def fake_sdk(monkeypatch, selection):
     )
     monkeypatch.setattr("copilot.CopilotClient", FakeClient)
     monkeypatch.setattr(runner, "read_token", lambda: "test-token")
+    monkeypatch.setattr(runner, "_probe_read_tools", lambda: True)
     monkeypatch.setattr(runner, "_context_for", lambda *_: {"codebase_path": None})
     monkeypatch.setattr(runner, "save_candidates",
                         lambda *args: sdk.writes.append(args) or ["assessment-id"])
@@ -306,6 +307,15 @@ def test_unavailable_mcp_tool_does_not_write(fake_sdk, ctx, selection, snapshot)
         runner.run_assessment(ctx, selection, "gpt-5.4", snapshot)
     assert not fake_sdk.writes
     assert fake_sdk.session.disconnected
+
+
+def test_unavailable_mcp_preflight_fails_without_model_usage(fake_sdk, ctx, selection, snapshot, monkeypatch):
+    monkeypatch.setattr(runner, "_probe_read_tools", lambda: False)
+    with pytest.raises(OperationError, match="read-only"):
+        runner.run_assessment(ctx, selection, "gpt-5.4", snapshot)
+    assert fake_sdk.send_count == 0
+    assert fake_sdk.client_kwargs is None
+    assert not fake_sdk.writes
 
 
 def test_missing_mcp_health_event_fails_closed(fake_sdk, ctx, selection, snapshot):

@@ -82,11 +82,14 @@ external-agent workflow described below.
    history is kept in memory for one hour, not indefinitely or across server
    restarts.
 
-**Check connection** inspects setup, authentication and model availability;
-it does **not** make a billable assessment/model-inference call and cannot
-guarantee a later assessment succeeds. Running an assessment uses your
-Copilot subscription/allowance and may incur usage charges according to
-your GitHub plan and selected model.
+**Check connection** inspects setup, authentication, model availability, API
+reachability and the packaged MCP server's required read-only tools through
+a bounded local handshake. It does **not** make a billable
+assessment/model-inference call and cannot guarantee a later assessment
+succeeds. The runner repeats this preflight before its first model call;
+if the tools are unavailable then, no model usage is incurred. Otherwise,
+running an assessment uses your Copilot subscription/allowance and may incur
+usage charges according to your GitHub plan and selected model.
 
 Source inspection is optional and **opt-in**: set
 `VULNSCOUT_SOURCE_ROOT=/absolute/path/to/project` in the host environment

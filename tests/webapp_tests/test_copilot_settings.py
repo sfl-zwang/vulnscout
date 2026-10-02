@@ -2,15 +2,24 @@ import json
 import logging
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import pytest
+
+from src.controllers.copilot_settings import _probe_mcp_tools as actual_mcp_probe
 
 
 @pytest.fixture
 def client(monkeypatch, tmp_path):
     import copilot
     import httpx
+    from src.controllers import copilot_settings
+
+    async def available_read_tools(_base_url):
+        return True
+
+    monkeypatch.setattr(copilot_settings, "_probe_mcp_tools", available_read_tools)
 
     class AvailableClient:
         def __init__(self, **kwargs):
@@ -261,10 +270,11 @@ def test_valid_model_patch_requires_token_and_available_model(client, tmp_path):
     assert "COPILOT_MODEL=gpt-5.4" in (tmp_path / "config.env").read_text()
 
 
-def test_readiness_succeeds_with_runtime_skill_and_mcp(client):
+def test_readiness_succeeds_with_runtime_skill_and_mcp(client, monkeypatch):
     from src.controllers import copilot_settings
     from src.controllers.copilot_assessment_runner import MCP_SCRIPT
 
+    monkeypatch.setattr(copilot_settings, "_probe_mcp_tools", actual_mcp_probe)
     assert copilot_settings.MCP_SCRIPT == MCP_SCRIPT
     assert MCP_SCRIPT.is_file()
     assert client.put("/api/config/copilot", json={
@@ -311,6 +321,55 @@ def test_readiness_reports_unavailable_read_tools(client, monkeypatch):
     assert "VULNSCOUT_AGENT_API_URL" in data["errors"]["mcp"]
     assert "private credential" not in response.get_data(as_text=True)
     assert "github_pat_test" not in response.get_data(as_text=True)
+
+
+def test_readiness_rejects_missing_mcp_tools_despite_http_200(client, monkeypatch):
+    from src.controllers import copilot_settings
+    from mcp import ClientSession
+
+    async def missing_tools(_session, **_kwargs):
+        return SimpleNamespace(
+            tools=[SimpleNamespace(name="get_vulnerability")], next_cursor=None,
+        )
+
+    monkeypatch.setattr(copilot_settings, "_probe_mcp_tools", actual_mcp_probe)
+    monkeypatch.setattr(ClientSession, "list_tools", missing_tools)
+    assert client.put("/api/config/copilot", json={
+        "token": "github_pat_test", "model": "gpt-5.4"}).status_code == 200
+    data = client.post("/api/config/copilot/check").get_json()
+    assert data["ready"] is False
+    assert set(data["errors"]) == {"mcp"}
+
+
+def test_mcp_probe_rejects_unavailable_server_despite_http_200(client, monkeypatch):
+    from src.controllers import copilot_settings
+
+    @asynccontextmanager
+    async def unavailable_server(*_args, **_kwargs):
+        raise OSError("secret from server must not leak")
+        yield
+
+    monkeypatch.setattr(copilot_settings, "_probe_mcp_tools", actual_mcp_probe)
+    monkeypatch.setattr(copilot_settings, "stdio_client", unavailable_server)
+    assert client.put("/api/config/copilot", json={
+        "token": "github_pat_test", "model": "gpt-5.4"}).status_code == 200
+    response = client.post("/api/config/copilot/check")
+    assert response.get_json()["ready"] is False
+    assert set(response.get_json()["errors"]) == {"mcp"}
+    assert "secret from server" not in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("base_url", ["http://name:secret@localhost:7275", "http://[bad"])
+def test_mcp_probe_rejects_invalid_service_url(client, monkeypatch, base_url):
+    from src.controllers import copilot_settings
+    import httpx
+
+    def unexpected_http(*_args, **_kwargs):
+        raise AssertionError("Invalid URL must not make a request")
+
+    monkeypatch.setattr(httpx, "get", unexpected_http)
+    monkeypatch.setenv("VULNSCOUT_AGENT_API_URL", base_url)
+    assert copilot_settings._probe_read_tools() is False
 
 
 @pytest.mark.parametrize("status,payload", [(503, []), (200, {"error": "wrong service"})])
