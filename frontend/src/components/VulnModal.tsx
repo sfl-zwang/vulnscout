@@ -26,7 +26,9 @@ import { formatSourceName } from '../helpers/sourceNames';
 import { useDocUrl } from '../helpers/useDocUrl';
 import { splitPkgId, formatPkgId, extractSupplierName } from '../helpers/pkgId';
 import type { Variant } from '../handlers/variant';
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, useSyncExternalStore } from "react";
+import CopilotAssessmentPicker from "./CopilotAssessmentPicker";
+import { getSnapshot, subscribe } from "../handlers/operationStore";
 import NvdRefreshHandler from "../handlers/nvdRefresh";
 import EpssRefreshHandler from "../handlers/epssRefresh";
 import GhsaRefreshHandler from "../handlers/ghsaRefresh";
@@ -159,6 +161,13 @@ type VariantScopedSnapshot = {
     const [variantSnapshots, setVariantSnapshots] = useState<VariantScopedSnapshot[]>([]);
     const [variantPackageMap, setVariantPackageMap] = useState<Record<string, string[]>>({});
     const [variantFindingsMap, setVariantFindingsMap] = useState<Record<string, VariantFinding[]>>({});
+    const [showCopilotPicker, setShowCopilotPicker] = useState(false);
+    const [assessmentOperationId, setAssessmentOperationId] = useState<string | null>(null);
+    const observedAssessmentIds = useRef<Set<string>>(new Set());
+    const operations = useSyncExternalStore(subscribe, getSnapshot);
+    const assessmentOperation = operations.find(op => op.kind === "assessment"
+        && (op.op_id === assessmentOperationId
+            || (op.label === `Assess ${vuln.id}` && op.scope?.project_id === projectId)));
     // True once the active-SBOM package list has been fetched for every variant,
     // so deprecated packages can reliably be split into their own table.
     const [variantPackageMapLoaded, setVariantPackageMapLoaded] = useState(false);
@@ -306,6 +315,14 @@ type VariantScopedSnapshot = {
             .catch(() => {});
         return () => controller.abort();
     }, [vuln.id, projectId]);
+
+    useEffect(() => {
+        if (!assessmentOperation || assessmentOperation.status !== "done"
+            || observedAssessmentIds.current.has(assessmentOperation.op_id)) return;
+        observedAssessmentIds.current.add(assessmentOperation.op_id);
+        void refreshAllVulnAssessments().then(() => refreshAssessmentRows());
+        refreshReviews();
+    }, [assessmentOperation, refreshAllVulnAssessments, refreshAssessmentRows, refreshReviews]);
 
     // In all-variants mode, default to all variant targets for custom CVSS/time edits.
     useEffect(() => {
@@ -1902,6 +1919,26 @@ type VariantScopedSnapshot = {
 
                         <div className="mt-6">
                             <h3 className="font-bold mb-2">Assessments</h3>
+                            {!readOnly && projectId && availableVariants.some(v => (variantFindingsMap[v.id]?.length ?? 0) > 0) && (
+                                <div className="mb-4 space-y-2">
+                                    <button type="button" onClick={() => setShowCopilotPicker(true)}>Assess with Copilot</button>
+                                    {assessmentOperation && <p role="status">Assessment {assessmentOperation.status}.
+                                        {assessmentOperation.error && ` ${assessmentOperation.error}`}
+                                        {" "}Track progress or cancel in the operation queue.</p>}
+                                    {assessmentOperationId && !assessmentOperation && <p role="status">
+                                        Assessment queued. Track progress or cancel in the operation queue.</p>}
+                                    {showCopilotPicker && (
+                                        <CopilotAssessmentPicker
+                                            key={`${projectId}:${vuln.id}:${variantId ?? ""}`}
+                                            projectId={projectId} variantId={variantId} vulnId={vuln.id}
+                                            variants={availableVariants} variantFindingsMap={variantFindingsMap}
+                                            pendingAssessments={allVulnAssessments.filter(a => a.origin === "ai")}
+                                            onClose={() => setShowCopilotPicker(false)}
+                                            onStarted={opId => { setAssessmentOperationId(opId); setShowCopilotPicker(false); }}
+                                        />
+                                    )}
+                                </div>
+                            )}
                             {currentAssessmentRows.length > 0 && (
                                 <div className="mb-4 p-3 rounded-lg bg-gray-800/70 border border-gray-600">
                                     <h4 className="font-semibold text-gray-200 mb-2">Assessments on current SBOM packages and variants</h4>

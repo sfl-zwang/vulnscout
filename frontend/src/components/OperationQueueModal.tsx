@@ -8,7 +8,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import {
     faArrowsRotate, faBug, faCrosshairs, faFileExport, faFileImport,
-    faLeaf, faSeedling, faShieldHalved,
+    faLeaf, faSeedling, faShieldHalved, faWandMagicSparkles,
 } from "@fortawesome/free-solid-svg-icons";
 import type { IconDefinition } from "@fortawesome/free-solid-svg-icons";
 import OperationQueuePanel from "./OperationQueuePanel";
@@ -48,6 +48,7 @@ function appearanceFor(operation: Operation): Appearance {
     if (operation.kind === "refresh") return { icon: faArrowsRotate, colors: cyan };
     if (operation.kind === "export") return { icon: faFileExport, colors: teal };
     if (operation.kind === "upload") return { icon: faFileImport, colors: amber };
+    if (operation.kind === "assessment") return { icon: faWandMagicSparkles, colors: purple };
     return { icon: faSeedling, colors: green };
 }
 

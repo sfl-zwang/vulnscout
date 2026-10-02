@@ -42,7 +42,7 @@ export default function OperationQueuePanel({
     const expandsForStatus = isActivelyRunning || status === "error";
     const [isOpen, setIsOpen] = useState(expandsForStatus);
     const contentId = useId();
-    const title = scope?.variant_name ?? label;
+    const title = scope?.variant_name ?? (operation.kind === "assessment" ? "Copilot" : label);
 
     const logBoxRef = useRef<HTMLDivElement>(null);
     useEffect(() => {
@@ -118,6 +118,9 @@ export default function OperationQueuePanel({
 
             {isOpen && (
                 <div id={contentId}>
+                    {status === "error" && operation.error && (
+                        <p role="alert" className="px-4 py-2 text-sm text-red-300">{operation.error}</p>
+                    )}
                     <div className="w-full h-2 bg-neutral-800">
                         {!isActivelyRunning && status !== "done" && status !== "error" && status !== "cancelled" ? (
                             <div className="h-full w-full bg-neutral-600 animate-pulse" />

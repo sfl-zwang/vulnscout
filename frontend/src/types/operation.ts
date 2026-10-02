@@ -5,19 +5,19 @@
  * enrichment all arrive on the same event stream in this form.
  */
 
-export type OperationKind = "scan" | "refresh" | "upload" | "export" | "enrichment";
+export type OperationKind = "scan" | "refresh" | "upload" | "export" | "enrichment" | "assessment";
 
 export type OperationStatus = "queued" | "running" | "done" | "error" | "cancelled";
 
-export type OperationLane = "pipeline" | "export" | "upload";
+export type OperationLane = "pipeline" | "export" | "upload" | "assessment";
 
 export type ScanSource = "grype" | "nvd" | "osv" | "scc";
 
 export type RefreshSource = "nvd" | "epss" | "ghsa" | "euvd";
 
 export type OperationScope = {
-    variant_id: string;
-    variant_name: string;
+    variant_id?: string;
+    variant_name?: string;
     project_id: string;
 };
 

@@ -31,7 +31,8 @@ let reconnectAttempt = 0;
 let lastEventId: string | null = null;
 
 /** Swappable so tests can drive the store without a live server. */
-let createEventSource: (url: string) => EventSource = url => new EventSource(url);
+const defaultEventSource = (url: string): EventSource => new EventSource(url);
+let createEventSource: (url: string) => EventSource = defaultEventSource;
 
 const streamUrl = (): string => {
     const base = import.meta.env.VITE_API_URL + STREAM_PATH;
@@ -92,6 +93,7 @@ function scheduleReconnect() {
 
 function openStream() {
     if (source !== null) return;
+    if (typeof EventSource === "undefined" && createEventSource === defaultEventSource) return;
     setConnection(connection === "reconnecting" ? "reconnecting" : "connecting");
 
     const stream = createEventSource(streamUrl());
