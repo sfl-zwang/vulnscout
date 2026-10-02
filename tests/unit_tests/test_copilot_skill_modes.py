@@ -137,6 +137,188 @@ esac
 
 
 @pytest.mark.parametrize(
+    ("initial", "config_command", "expected", "replaced", "version"),
+    [
+        ("1", ["--config", "VULNSCOUT_AGENT_ENABLED", "0"], "0", True, "27.5.1"),
+        ("1", ["--config-clear", "VULNSCOUT_AGENT_ENABLED"], None, True, "27.5.1"),
+        ("0", ["--config", "VULNSCOUT_AGENT_ENABLED", "1"], "0", False, "27.5.1"),
+        ("0", ["--config", "VULNSCOUT_AGENT_ENABLED", "1"], "1", True, "28.0.0"),
+    ],
+)
+def test_agent_config_transition_on_docker(initial, config_command, expected, replaced, version):
+    with tempfile.TemporaryDirectory(dir=ROOT) as workdir:
+        work = Path(workdir)
+        bin_dir = work / "bin"
+        bin_dir.mkdir()
+        docker = bin_dir / "docker"
+        docker.write_text("""#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$VULNSCOUT_TEST_LOG"
+case "$1" in
+  version) echo "$VULNSCOUT_TEST_VERSION" ;;
+  ps) echo vulnscout ;;
+  inspect)
+    if [[ "$*" == *'.Config.Env'* ]]; then
+      echo "VULNSCOUT_AGENT_ENABLED=$(cat "$VULNSCOUT_TEST_CONTAINER_ENV")"
+    elif [[ "$*" == *'.HostConfig.PortBindings'* ]]; then
+      echo 127.0.0.1:7275
+    fi ;;
+  rm) : ;;
+  run)
+    if [[ "$*" == *'run -d '* ]]; then
+      if [[ "$*" == *'-e VULNSCOUT_AGENT_ENABLED=1'* ]]; then
+        echo 1 > "$VULNSCOUT_TEST_CONTAINER_ENV"
+      else
+        echo 0 > "$VULNSCOUT_TEST_CONTAINER_ENV"
+      fi
+    fi ;;
+  exec) : ;;
+  *) exit 99 ;;
+esac
+""")
+        docker.chmod(0o755)
+        cache = work / "build" / "cache"
+        cache.mkdir(parents=True)
+        config = cache / "config.env"
+        config.write_text(f"VULNSCOUT_AGENT_ENABLED={initial}\n")
+        container_env = work / "container-env"
+        container_env.write_text(initial)
+        log = work / "calls.log"
+        env = os.environ.copy()
+        env.update(
+            PATH=f"{bin_dir}:/usr/bin:/bin",
+            VULNSCOUT_BUILD_DIR=str(work / "build"),
+            VULNSCOUT_TEST_LOG=str(log),
+            VULNSCOUT_TEST_CONTAINER_ENV=str(container_env),
+            VULNSCOUT_TEST_VERSION=version,
+        )
+        env.pop("VULNSCOUT_AGENT_ENABLED", None)
+        result = subprocess.run([str(ROOT / "vulnscout"), *config_command],
+                                env=env, capture_output=True, text=True)
+        assert (result.returncode == 0) == replaced, result.stderr
+        assert container_env.read_text().strip() == (
+            (expected or "0") if replaced else initial
+        )
+        assert config.read_text().strip() == (
+            f"VULNSCOUT_AGENT_ENABLED={expected}" if expected is not None else ""
+        )
+        calls = log.read_text().splitlines()
+        assert any(line.startswith("run -d ") for line in calls) == replaced, calls
+        assert any(line.startswith("rm -f ") for line in calls) == replaced, calls
+        if not replaced:
+            assert "Docker server >=28.0.0" in result.stderr
+        log.write_text("")
+        reuse = subprocess.run([str(ROOT / "vulnscout"), "--refresh-vulnerability-data"],
+                               env=env, capture_output=True, text=True)
+        assert reuse.returncode == 0, reuse.stderr
+        assert not any(line.startswith(("rm ", "run -d ")) for line in log.read_text().splitlines())
+
+
+@pytest.mark.parametrize("version", ["27.5.1", "unavailable", "28.0.0"])
+def test_external_agent_container_checks_actual_env_before_reuse(version):
+    with tempfile.TemporaryDirectory(dir=ROOT) as workdir:
+        work = Path(workdir)
+        bin_dir = work / "bin"
+        bin_dir.mkdir()
+        docker = bin_dir / "docker"
+        docker.write_text("""#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$VULNSCOUT_TEST_LOG"
+case "$1" in
+  version)
+    [[ "$VULNSCOUT_TEST_VERSION" != unavailable ]] || exit 1
+    echo "$VULNSCOUT_TEST_VERSION" ;;
+  ps) echo vulnscout ;;
+  inspect)
+    if [[ "$*" == *'.Config.Env'* ]]; then
+      echo VULNSCOUT_AGENT_ENABLED=1
+    elif [[ "$*" == *'.HostConfig.PortBindings'* ]]; then
+      echo 127.0.0.1:7275
+    fi ;;
+  exec) : ;;
+  *) exit 99 ;;
+esac
+""")
+        docker.chmod(0o755)
+        cache = work / "build" / "cache"
+        cache.mkdir(parents=True)
+        (cache / "config.env").write_text("VULNSCOUT_AGENT_ENABLED=0\n")
+        log = work / "calls.log"
+        env = os.environ.copy()
+        env.update(
+            PATH=f"{bin_dir}:/usr/bin:/bin",
+            VULNSCOUT_BUILD_DIR=str(work / "build"),
+            VULNSCOUT_TEST_LOG=str(log),
+            VULNSCOUT_TEST_VERSION=version,
+        )
+        env.pop("VULNSCOUT_AGENT_ENABLED", None)
+        result = subprocess.run(
+            [str(ROOT / "vulnscout"), "--refresh-vulnerability-data"],
+            env=env, capture_output=True, text=True,
+        )
+        allowed = version == "28.0.0"
+        assert (result.returncode == 0) == allowed, result.stderr
+        calls = log.read_text().splitlines()
+        assert any(line.startswith("version ") for line in calls)
+        assert any(line.startswith("inspect ") and ".Config.Env" in line for line in calls)
+        assert any(line.startswith("exec ") for line in calls) == allowed
+        assert not any(line.startswith(("rm ", "run ")) for line in calls)
+
+
+@pytest.mark.parametrize(
+    ("command", "failure", "message"),
+    [
+        (["--refresh-vulnerability-data"], "inspect", "cannot inspect running container"),
+        (["--refresh-vulnerability-data"], "ps", "cannot list running containers"),
+        (["--config", "VULNSCOUT_AGENT_ENABLED", "0"], "ps", "config unchanged"),
+        (["--config", "VULNSCOUT_AGENT_ENABLED", "0"], "rm", "cannot remove running container"),
+    ],
+)
+def test_docker_unavailable_fails_closed(command, failure, message):
+    with tempfile.TemporaryDirectory(dir=ROOT) as workdir:
+        work = Path(workdir)
+        bin_dir = work / "bin"
+        bin_dir.mkdir()
+        docker = bin_dir / "docker"
+        docker.write_text("""#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$VULNSCOUT_TEST_LOG"
+case "$1" in
+  ps) [[ "$VULNSCOUT_TEST_FAILURE" != ps ]] && echo vulnscout ;;
+  inspect) [[ "$VULNSCOUT_TEST_FAILURE" != inspect ]] && echo VULNSCOUT_AGENT_ENABLED=1 ;;
+  rm) [[ "$VULNSCOUT_TEST_FAILURE" != rm ]] ;;
+  *) exit 99 ;;
+esac
+""")
+        docker.chmod(0o755)
+        cache = work / "build" / "cache"
+        cache.mkdir(parents=True)
+        config = cache / "config.env"
+        initial = "1" if failure == "rm" else "0"
+        config.write_text(f"VULNSCOUT_AGENT_ENABLED={initial}\n")
+        log = work / "calls.log"
+        env = os.environ.copy()
+        env.update(
+            PATH=f"{bin_dir}:/usr/bin:/bin",
+            VULNSCOUT_BUILD_DIR=str(work / "build"),
+            VULNSCOUT_TEST_LOG=str(log),
+            VULNSCOUT_TEST_FAILURE=failure,
+        )
+        env.pop("VULNSCOUT_AGENT_ENABLED", None)
+        result = subprocess.run([str(ROOT / "vulnscout"), *command],
+                                env=env, capture_output=True, text=True)
+        assert result.returncode != 0
+        assert message in result.stderr
+        assert config.read_text() == (
+            "VULNSCOUT_AGENT_ENABLED=0\n" if failure == "rm"
+            else f"VULNSCOUT_AGENT_ENABLED={initial}\n"
+        )
+        calls = log.read_text().splitlines()
+        assert not any(line.startswith(("run ", "exec ")) for line in calls)
+        assert any(line.startswith("rm ") for line in calls) == (failure == "rm")
+
+
+@pytest.mark.parametrize(
     ("mounted", "read_write", "requested", "restart"),
     [
         ("source-a", False, "source-a", False),

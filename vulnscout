@@ -192,7 +192,7 @@ container_has_local_port() {
 
 check_agent_docker_version() {
     [[ "$CONTAINER_ENGINE" == docker ]] || return 0
-    if [[ "${VULNSCOUT_AGENT_ENABLED:-}" != 1 ]] &&
+    if [[ "${1:-${VULNSCOUT_AGENT_ENABLED:-}}" != 1 ]] &&
         ! grep -qx 'VULNSCOUT_AGENT_ENABLED=1' "$VULNSCOUT_CONFIG_FILE" 2>/dev/null; then
         return 0
     fi
@@ -209,25 +209,46 @@ check_agent_docker_version() {
     return 1
 }
 
+check_running_agent_docker_version() {
+    [[ "$CONTAINER_ENGINE" == docker ]] || return 0
+    local env_lines
+    if ! env_lines="$(call_container_engine inspect "$CONTAINER_NAME" \
+        --format '{{range .Config.Env}}{{println .}}{{end}}')"; then
+        echo "Error: cannot inspect running container environment; refusing to reuse it." >&2
+        return 1
+    fi
+    if grep -qx 'VULNSCOUT_AGENT_ENABLED=1' <<< "$env_lines"; then
+        check_agent_docker_version 1
+    fi
+}
+
 ensure_running() {
     if [[ -n "${VULNSCOUT_SOURCE_ROOT:-}" ]] && [[ ! -d "$VULNSCOUT_SOURCE_ROOT" ]]; then
         echo "Source root not found" >&2
         return 1
     fi
     check_agent_docker_version || return 1
-    if ! call_container_engine ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
+    local running
+    running="$(call_container_engine ps --format '{{.Names}}')" || {
+        echo "Error: cannot list running containers." >&2
+        return 1
+    }
+    if ! grep -qx "$CONTAINER_NAME" <<< "$running"; then
         echo "Container not running, starting..."
         do_start
-    elif [ "$DEV_MODE" = true ] && [ -d "$SCRIPT_DIR/src" ] && ! container_has_dev_mount; then
-        # Otherwise the container keeps serving the image's src/, ignoring local changes
-        echo "Container running without dev mode, restarting..."
-        do_start
-    elif ! container_has_source_mount; then
-        echo "Container source mount differs from requested configuration, restarting..."
-        do_start
-    elif ! container_has_local_port; then
-        echo "Container port binding differs from localhost-only configuration, restarting..."
-        do_start
+    else
+        check_running_agent_docker_version || return 1
+        if [ "$DEV_MODE" = true ] && [ -d "$SCRIPT_DIR/src" ] && ! container_has_dev_mount; then
+            # Otherwise the container keeps serving the image's src/, ignoring local changes
+            echo "Container running without dev mode, restarting..."
+            do_start
+        elif ! container_has_source_mount; then
+            echo "Container source mount differs from requested configuration, restarting..."
+            do_start
+        elif ! container_has_local_port; then
+            echo "Container port binding differs from localhost-only configuration, restarting..."
+            do_start
+        fi
     fi
 }
 
@@ -245,15 +266,32 @@ add_input() {
 config_set() {
     local key="$1"
     local value="$2"
+    local running=""
+    if [ "$key" = "VULNSCOUT_AGENT_ENABLED" ]; then
+        if [[ "$value" == 1 ]]; then
+            check_agent_docker_version 1 || return 1
+        fi
+        running="$(call_container_engine ps --format '{{.Names}}')" || {
+            echo "Error: cannot list running containers; config unchanged." >&2
+            return 1
+        }
+    fi
     mkdir -p "$(dirname "$VULNSCOUT_CONFIG_FILE")"
     touch "$VULNSCOUT_CONFIG_FILE"
     local tmp
-    tmp=$(mktemp)
+    tmp=$(mktemp "${VULNSCOUT_CONFIG_FILE}.XXXXXX")
     grep -v "^${key}=" "$VULNSCOUT_CONFIG_FILE" > "$tmp" || true
     echo "${key}=${value}" >> "$tmp"
     cat "$tmp" > "$VULNSCOUT_CONFIG_FILE"
     rm -f "$tmp"
     echo "Config set: $key=$value"
+    if [ "$key" = "VULNSCOUT_AGENT_ENABLED" ]; then
+        VULNSCOUT_AGENT_ENABLED="$value"
+        if grep -qx "$CONTAINER_NAME" <<< "$running"; then
+            echo "Restarting container to apply VULNSCOUT_AGENT_ENABLED..."
+            do_start true
+        fi
+    fi
     # Restart the container so volume mounts reflect the new cache dir
     if [ "$key" = "VULNSCOUT_CACHE_DIR" ] && call_container_engine ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         echo "Restarting container to apply new VULNSCOUT_CACHE_DIR..."
@@ -264,13 +302,27 @@ config_set() {
 
 config_clear() {
     local key="$1"
+    local running=""
+    if [ "$key" = "VULNSCOUT_AGENT_ENABLED" ]; then
+        running="$(call_container_engine ps --format '{{.Names}}')" || {
+            echo "Error: cannot list running containers; config unchanged." >&2
+            return 1
+        }
+    fi
     touch "$VULNSCOUT_CONFIG_FILE"
     local tmp
-    tmp=$(mktemp)
+    tmp=$(mktemp "${VULNSCOUT_CONFIG_FILE}.XXXXXX")
     grep -v "^${key}=" "$VULNSCOUT_CONFIG_FILE" > "$tmp" || true
     cat "$tmp" > "$VULNSCOUT_CONFIG_FILE"
     rm -f "$tmp"
     echo "Config cleared: $key"
+    if [ "$key" = "VULNSCOUT_AGENT_ENABLED" ]; then
+        unset VULNSCOUT_AGENT_ENABLED
+        if grep -qx "$CONTAINER_NAME" <<< "$running"; then
+            echo "Restarting container to apply VULNSCOUT_AGENT_ENABLED..."
+            do_start true
+        fi
+    fi
 }
 
 do_start() {
@@ -279,7 +331,14 @@ do_start() {
         VULNSCOUT_SOURCE_ROOT="$(readlink -f "$VULNSCOUT_SOURCE_ROOT")"
     fi
     check_agent_docker_version || return 1
-    call_container_engine rm -f "$CONTAINER_NAME" 2>/dev/null || true
+    if [[ "${1:-}" == true ]]; then
+        call_container_engine rm -f "$CONTAINER_NAME" || {
+            echo "Error: cannot remove running container to apply agent config." >&2
+            return 1
+        }
+    else
+        call_container_engine rm -f "$CONTAINER_NAME" 2>/dev/null || true
+    fi
     mkdir -p "$VULNSCOUT_CACHE_DIR" "$VULNSCOUT_OUTPUTS_DIR" "$(dirname "$VULNSCOUT_CONFIG_FILE")"
 
     if [[ $CONTAINER_ENGINE = "docker" ]]; then
