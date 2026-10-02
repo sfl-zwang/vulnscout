@@ -14,6 +14,8 @@ case "$1" in
     ps)
         echo "vulnscout"
         ;;
+    inspect)
+        ;;
     cp)
         ;;
     exec)

@@ -174,14 +174,22 @@ container_has_dev_mount() {
 }
 
 container_has_source_mount() {
-    local source
-    source="$(readlink -f "$VULNSCOUT_SOURCE_ROOT")"
-    call_container_engine inspect "$CONTAINER_NAME" \
-        --format '{{range .Mounts}}{{if eq .Destination "/scan/project-source"}}{{.Source}}{{println}}{{end}}{{end}}' 2>/dev/null \
-        | grep -Fxq "$source"
+    local mount source
+    mount="$(call_container_engine inspect "$CONTAINER_NAME" \
+        --format '{{range .Mounts}}{{if eq .Destination "/scan/project-source"}}{{.Source}} {{.RW}}{{println}}{{end}}{{end}}' 2>/dev/null)" || return 1
+    if [[ -z "${VULNSCOUT_SOURCE_ROOT:-}" ]]; then
+        [[ -z "$mount" ]]
+    else
+        source="$(readlink -f "$VULNSCOUT_SOURCE_ROOT")"
+        [[ "$mount" == "$source false" ]]
+    fi
 }
 
 ensure_running() {
+    if [[ -n "${VULNSCOUT_SOURCE_ROOT:-}" ]] && [[ ! -d "$VULNSCOUT_SOURCE_ROOT" ]]; then
+        echo "Source root not found" >&2
+        return 1
+    fi
     if ! call_container_engine ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
         echo "Container not running, starting..."
         do_start
@@ -189,8 +197,8 @@ ensure_running() {
         # Otherwise the container keeps serving the image's src/, ignoring local changes
         echo "Container running without dev mode, restarting..."
         do_start
-    elif [[ -n "${VULNSCOUT_SOURCE_ROOT:-}" ]] && ! container_has_source_mount; then
-        echo "Container running without requested source mount, restarting..."
+    elif ! container_has_source_mount; then
+        echo "Container source mount differs from requested configuration, restarting..."
         do_start
     fi
 }
