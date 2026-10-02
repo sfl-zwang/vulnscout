@@ -278,3 +278,28 @@ def test_invalid_existing_secret_does_not_change_model(client, tmp_path):
         "token": "github_pat_test", "model": "gpt-5.4"})
     assert response.status_code == 500
     assert not (tmp_path / "config.env").exists()
+
+
+def test_token_save_failure_preserves_active_and_persisted_model(client, tmp_path, monkeypatch):
+    from src.controllers import copilot_settings
+
+    assert client.put("/api/config/copilot", json={
+        "token": "github_pat_test", "model": "gpt-5.4"}).status_code == 200
+    config_file = tmp_path / "config.env"
+    original_config = config_file.read_text()
+    assert "COPILOT_MODEL=gpt-5.4" in original_config
+
+    monkeypatch.setattr(copilot_settings, "model_access_error", lambda *_: None)
+
+    def fail_save(_token):
+        raise OSError("credential store unavailable")
+
+    monkeypatch.setattr(copilot_settings, "save_token", fail_save)
+    response = client.put("/api/config/copilot", json={
+        "token": "github_pat_new", "model": "other-model"})
+
+    assert response.status_code == 500
+    assert config_file.read_text() == original_config
+    assert client.get("/api/config").get_json()["copilot_model"] == "gpt-5.4"
+    assert client.get("/api/config/copilot").get_json()["model"] == "gpt-5.4"
+    assert copilot_settings.read_token() == "github_pat_test"

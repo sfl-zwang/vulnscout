@@ -253,14 +253,14 @@ def init_app(app):
                 copilot_settings.read_token()
             except (OSError, ValueError, UnicodeError):
                 return jsonify({"error": "Copilot credential file is invalid."}), 500
-        if "model" in data and not _write_config_key("COPILOT_MODEL", model):
-            return jsonify({"error": "Could not persist Copilot model."}), 500
         try:
             if "token" in data:
                 assert isinstance(token, str)
                 copilot_settings.save_token(token)
         except (OSError, ValueError):
             return jsonify({"error": "Could not persist Copilot token securely."}), 500
+        if "model" in data and not _write_config_key("COPILOT_MODEL", model):
+            return jsonify({"error": "Could not persist Copilot model."}), 500
         if "model" in data:
             assert isinstance(model, str)
             os.environ["COPILOT_MODEL"] = model
