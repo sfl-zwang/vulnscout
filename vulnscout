@@ -185,6 +185,11 @@ container_has_source_mount() {
     fi
 }
 
+container_has_local_port() {
+    [[ "$(call_container_engine inspect "$CONTAINER_NAME" \
+        --format '{{range index .HostConfig.PortBindings "7275/tcp"}}{{.HostIp}}:{{.HostPort}}{{println}}{{end}}' 2>/dev/null)" == "127.0.0.1:7275" ]]
+}
+
 ensure_running() {
     if [[ -n "${VULNSCOUT_SOURCE_ROOT:-}" ]] && [[ ! -d "$VULNSCOUT_SOURCE_ROOT" ]]; then
         echo "Source root not found" >&2
@@ -199,6 +204,9 @@ ensure_running() {
         do_start
     elif ! container_has_source_mount; then
         echo "Container source mount differs from requested configuration, restarting..."
+        do_start
+    elif ! container_has_local_port; then
+        echo "Container port binding differs from localhost-only configuration, restarting..."
         do_start
     fi
 }
@@ -325,7 +333,7 @@ EOF
     fi
 
     call_container_engine run -d --name "$CONTAINER_NAME" \
-        -p 7275:7275 \
+        -p 127.0.0.1:7275:7275 \
         "${env_args[@]}" \
         "${vol_args[@]}" \
         "$DOCKER_IMAGE" daemon

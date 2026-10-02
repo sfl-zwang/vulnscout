@@ -19,18 +19,33 @@ The **Assess with Copilot** button runs the packaged Copilot SDK and
 or host-side MCP setup is needed for this button. This is distinct from the
 external-agent workflow described below.
 
-1. Restrict port 7275 to local clients (for example, with a host firewall),
-   then run `./vulnscout --config VULNSCOUT_AGENT_ENABLED 1` and restart
-   VulnScout. The wrapper currently publishes port 7275 on all host
-   interfaces, so do **not** rely on the URL alone to restrict access.
-   Docker's default bridge presents requests from the host as its gateway
-   address (often `172.17.0.1`); set
+1. Run `./vulnscout --config VULNSCOUT_AGENT_ENABLED 1`, then invoke
+   `./vulnscout --start` to apply the setting. The wrapper publishes port
+   7275 on **127.0.0.1 only** and recreates already-running containers
+   with a legacy all-interface binding when invoked for a command that
+   uses the container (for example, `./vulnscout --serve`). Verify the
+   active binding before trusting a Docker bridge client:
+
+   ```bash
+   docker inspect vulnscout --format \
+     '{{range index .HostConfig.PortBindings "7275/tcp"}}{{.HostIp}}:{{.HostPort}}{{println}}{{end}}'
+   # Must print exactly: 127.0.0.1:7275
+   ```
+
+   If the output differs, restart with `./vulnscout --restart` and verify
+   again. A host firewall's INPUT rules alone (including UFW) may not
+   restrict Docker-published ports; do not trust the bridge gateway while
+   the port is exposed on other interfaces. Docker's default bridge
+   presents requests from the host as its gateway address (often
+   `172.17.0.1`); set
    `./vulnscout --config VULNSCOUT_AGENT_TRUSTED_CLIENTS 172.17.0.1`
-   **only after** restricting the port. Find your actual gateway with
+   **only after verifying loopback binding**. Find your actual gateway with
    `docker network inspect bridge --format '{{(index .IPAM.Config 0).Gateway}}'`
-   and substitute it if different. Then restart again. Open `http://localhost:7275` (not a
-   remote host or alternate hostname). Without a trusted bridge gateway,
-   even host-local requests may receive HTTP 403.
+   and substitute it if different. Restart to apply the new setting.
+   Open `http://localhost:7275` (not a remote host or alternate hostname).
+   Without a trusted bridge gateway, even host-local requests may receive
+   HTTP 403. If using Podman, verify its published port is loopback-only
+   before trusting its gateway.
 2. In **Settings → Copilot**, save a supported GitHub personal access token
    (a classic `ghp_` token or fine-grained `github_pat_` token) from an
    identity with Copilot access. A fine-grained token needs **Copilot Requests**
@@ -78,14 +93,14 @@ docker run --rm --entrypoint sh vulnscout:copilot-plan-smoke -c \
    test ! -e /scan/project-source'
 
 # A disposable volume simulates two container starts; this is NOT a real token.
-docker volume create vulnscout-copilot-doc-smoke
-docker run --rm -v vulnscout-copilot-doc-smoke:/cache/vulnscout \
+volume=$(docker volume create)
+docker run --rm -v "$volume:/cache/vulnscout" \
   --entrypoint python3 vulnscout:copilot-plan-smoke -c \
   'from src.controllers.copilot_settings import save_token; save_token("synthetic-smoke-not-a-real-token")'
-docker run --rm -v vulnscout-copilot-doc-smoke:/cache/vulnscout \
+docker run --rm -v "$volume:/cache/vulnscout" \
   --entrypoint python3 vulnscout:copilot-plan-smoke -c \
   'from src.controllers.copilot_settings import read_token; import os, stat; assert read_token() == "synthetic-smoke-not-a-real-token"; assert stat.S_IMODE(os.stat("/cache/vulnscout/copilot-token").st_mode) == 0o600'
-docker volume rm vulnscout-copilot-doc-smoke
+docker volume rm "$volume"
 
 # Explicit project mount is read-only; no project directory is mounted above.
 container=$(docker create --entrypoint sh \

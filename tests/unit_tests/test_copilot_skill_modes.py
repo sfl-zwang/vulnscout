@@ -53,6 +53,16 @@ def test_optional_source_root_is_read_only_and_checked():
     assert "container_has_source_mount" in text
     assert text.index('[[ -d "$VULNSCOUT_SOURCE_ROOT" ]]', text.index("do_start() {")) < text.index(
         'call_container_engine rm -f "$CONTAINER_NAME"', text.index("do_start() {"))
+    assert "-p 127.0.0.1:7275:7275" in text
+
+
+def test_copilot_docs_verify_loopback_and_use_disposable_volume():
+    text = (ROOT / "doc/source/ai-assessments.md").read_text()
+    assert '.HostConfig.PortBindings "7275/tcp"' in text
+    assert "127.0.0.1:7275" in text
+    assert "volume=$(docker volume create)" in text
+    assert 'docker volume rm "$volume"' in text
+    assert "docker volume create vulnscout-copilot-doc-smoke" not in text
 
 
 @pytest.mark.parametrize(
@@ -80,7 +90,9 @@ printf '%s\\n' "$*" >> "$VULNSCOUT_TEST_LOG"
 case "$1" in
   ps) echo vulnscout ;;
   inspect)
-    if [[ -n "${VULNSCOUT_TEST_MOUNT:-}" ]]; then
+    if [[ "$*" == *'.HostConfig.PortBindings'* ]]; then
+      echo 127.0.0.1:7275
+    elif [[ -n "${VULNSCOUT_TEST_MOUNT:-}" ]]; then
       if [[ "$*" == *'.RW'* ]]; then
         echo "$VULNSCOUT_TEST_MOUNT $VULNSCOUT_TEST_RW"
       else
@@ -117,6 +129,67 @@ esac
         if restart:
             mount_arg = f"{work / requested}:/scan/project-source:ro,Z" if requested else "/scan/project-source:"
             assert (mount_arg in runs[0]) == bool(requested), runs
+            assert "-p 127.0.0.1:7275:7275" in runs[0]
+
+
+@pytest.mark.parametrize(
+    ("binding", "restart"),
+    [
+        ("0.0.0.0:7275", True),
+        ("127.0.0.1:8484", True),
+        ("", True),
+        ("127.0.0.1:7275", False),
+    ],
+)
+def test_running_container_replaces_unsafe_port_binding(binding, restart):
+    with tempfile.TemporaryDirectory(dir=ROOT) as workdir:
+        work = Path(workdir)
+        source = work / "source"
+        source.mkdir()
+        bin_dir = work / "bin"
+        bin_dir.mkdir()
+        podman = bin_dir / "podman"
+        podman.write_text("""#!/bin/bash
+set -euo pipefail
+printf '%s\\n' "$*" >> "$VULNSCOUT_TEST_LOG"
+case "$1" in
+  ps) echo vulnscout ;;
+  inspect)
+    if [[ "$*" == *'.HostConfig.PortBindings'* ]]; then
+      printf '%s\\n' "$VULNSCOUT_TEST_BINDING"
+    elif [[ "$*" == *'.RW'* ]]; then
+      printf '%s false\\n' "$VULNSCOUT_SOURCE_ROOT"
+    else
+      printf '%s\\n' "$VULNSCOUT_SOURCE_ROOT"
+    fi ;;
+  rm|run|exec) : ;;
+  *) exit 99 ;;
+esac
+""")
+        podman.chmod(0o755)
+        log = work / "calls.log"
+        env = os.environ.copy()
+        env.update(
+            PATH=f"{bin_dir}:/usr/bin:/bin",
+            VULNSCOUT_BUILD_DIR=str(work / "build"),
+            VULNSCOUT_TEST_LOG=str(log),
+            VULNSCOUT_TEST_BINDING=binding,
+            VULNSCOUT_SOURCE_ROOT=str(source),
+        )
+        result = subprocess.run(
+            [str(ROOT / "vulnscout"), "--refresh-vulnerability-data"],
+            env=env, capture_output=True, text=True,
+        )
+        assert result.returncode == 0, result.stderr
+        calls = log.read_text().splitlines()
+        removed = [line for line in calls if line.startswith("rm -f ")]
+        runs = [line for line in calls if line.startswith("run -d ")]
+        assert bool(removed) == bool(runs) == restart, calls
+        if restart:
+            assert "-p 127.0.0.1:7275:7275" in runs[0]
+            assert f"{source}:/scan/project-source:ro,Z" in runs[0]
+            assert f"{work / 'build' / 'cache'}:/cache/vulnscout:Z" in runs[0]
+            assert f"{work / 'build' / 'outputs'}:/scan/outputs:Z" in runs[0]
 
 
 def test_invalid_source_root_does_not_remove_running_container():
