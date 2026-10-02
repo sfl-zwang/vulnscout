@@ -97,7 +97,6 @@ def fake_sdk(monkeypatch, selection):
     )
     monkeypatch.setattr("copilot.CopilotClient", FakeClient)
     monkeypatch.setattr(runner, "read_token", lambda: "test-token")
-    monkeypatch.setattr(runner, "configured_model", lambda: "gpt-5.4")
     monkeypatch.setattr(runner, "_context_for", lambda *_: {"codebase_path": None})
     monkeypatch.setattr(runner, "save_candidates",
                         lambda *args: sdk.writes.append(args) or ["assessment-id"])
@@ -323,13 +322,22 @@ def test_missing_mcp_script_fails_before_client(fake_sdk, ctx, selection, snapsh
     assert fake_sdk.client_kwargs is None
 
 
-def test_wrong_instance_model_and_duplicate_variant_rejected(fake_sdk, ctx, selection, snapshot):
-    with pytest.raises(OperationError, match="configured"):
-        runner.run_assessment(ctx, selection, "other-model", snapshot)
+def test_invalid_model_and_duplicate_variant_rejected(fake_sdk, ctx, selection, snapshot):
+    with pytest.raises(OperationError, match="valid Copilot model"):
+        runner.run_assessment(ctx, selection, "../model", snapshot)
     duplicate = Selection(selection.project_id, selection.vuln_id, selection.targets * 2)
     with pytest.raises(OperationError, match="one package per variant"):
         runner.run_assessment(ctx, duplicate, "gpt-5.4", snapshot)
     assert fake_sdk.client_kwargs is None
+
+
+def test_queued_run_uses_model_snapshot_after_setting_changes(
+    fake_sdk, ctx, selection, snapshot, monkeypatch,
+):
+    monkeypatch.setenv("COPILOT_MODEL", "other-model")
+    runner.run_assessment(ctx, selection, "gpt-5.4", snapshot)
+    assert fake_sdk.options["model"] == "gpt-5.4"
+    assert ctx.results == [{"assessment_ids": ["assessment-id"]}]
 
 
 def test_source_roots_reject_traversal_and_symlink_escape(tmp_path, monkeypatch):

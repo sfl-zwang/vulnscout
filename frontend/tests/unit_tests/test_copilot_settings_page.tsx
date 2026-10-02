@@ -80,6 +80,59 @@ describe("Copilot settings", () => {
       String(url).endsWith("/api/config/copilot") && options?.method === "DELETE")).toBe(true);
   });
 
+  test("clears models from a previous token on replacement and removal", async () => {
+    let tokenPresent = true;
+    fetchMock.mockResponse(async request => {
+      if (request.url.endsWith("/api/config/copilot/check")) {
+        return JSON.stringify({ ready: true, errors: {}, available_models: ["old-identity-model"] });
+      }
+      if (request.url.endsWith("/api/config/copilot")) {
+        if (request.method === "DELETE") tokenPresent = false;
+        return JSON.stringify({
+          has_token: tokenPresent, masked_token: tokenPresent ? "********" : "", model: "",
+        });
+      }
+      return JSON.stringify({});
+    });
+    const user = userEvent.setup();
+    render(<Settings />);
+    const section = await screen.findByRole("region", { name: "Copilot" });
+    await user.click(within(section).getByRole("button", { name: "Check connection" }));
+    expect(await within(section).findByRole("option", { name: "old-identity-model" })).toBeInTheDocument();
+    await user.click(within(section).getByRole("button", { name: "Change" }));
+    await user.type(within(section).getByLabelText("Copilot token"), "replacement");
+    await user.click(within(section).getByRole("button", { name: "Save Copilot token" }));
+    await waitFor(() => expect(within(section).queryByRole("option", { name: "old-identity-model" })).not.toBeInTheDocument());
+    await user.click(within(section).getByRole("button", { name: "Check connection" }));
+    expect(await within(section).findByRole("option", { name: "old-identity-model" })).toBeInTheDocument();
+    await user.click(within(section).getByRole("button", { name: "Remove" }));
+    await user.click(screen.getByRole("button", { name: "Remove token" }));
+    await waitFor(() => expect(within(section).queryByRole("option", { name: "old-identity-model" })).not.toBeInTheDocument());
+  });
+
+  test("ignores an in-flight connection check after token replacement", async () => {
+    let finishCheck: (value: string) => void = () => {};
+    const waitingCheck = new Promise<string>(resolve => { finishCheck = resolve; });
+    fetchMock.mockResponse(async request => {
+      if (request.url.endsWith("/api/config/copilot/check")) return waitingCheck;
+      if (request.url.endsWith("/api/config/copilot")) {
+        return JSON.stringify({ has_token: true, masked_token: "********", model: "" });
+      }
+      return JSON.stringify({});
+    });
+    const user = userEvent.setup();
+    render(<Settings />);
+    const section = await screen.findByRole("region", { name: "Copilot" });
+    await user.click(within(section).getByRole("button", { name: "Check connection" }));
+    await user.click(within(section).getByRole("button", { name: "Change" }));
+    await user.type(within(section).getByLabelText("Copilot token"), "replacement");
+    await user.click(within(section).getByRole("button", { name: "Save Copilot token" }));
+    await within(section).findByText("Copilot token saved.");
+    finishCheck(JSON.stringify({ ready: true, errors: {}, available_models: ["old-identity-model"] }));
+    await waitFor(() => expect(within(section).getByRole("button", { name: "Check connection" })).not.toBeDisabled());
+    expect(within(section).queryByRole("option", { name: "old-identity-model" })).not.toBeInTheDocument();
+  });
+
   test("selects the instance-wide model and reports an unavailable model", async () => {
     fetchMock.mockResponse(async request => {
       if (request.url.endsWith("/api/config/copilot")) {

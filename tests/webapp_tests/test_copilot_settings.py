@@ -10,6 +10,7 @@ import pytest
 @pytest.fixture
 def client(monkeypatch, tmp_path):
     import copilot
+    import httpx
 
     class AvailableClient:
         def __init__(self, **kwargs):
@@ -29,6 +30,7 @@ def client(monkeypatch, tmp_path):
             return [SimpleNamespace(id="gpt-5.4")]
 
     monkeypatch.setattr(copilot, "CopilotClient", AvailableClient)
+    monkeypatch.setattr(httpx, "get", lambda *_args, **_kwargs: httpx.Response(200, json=[]))
     monkeypatch.setenv("FLASK_SQLALCHEMY_DATABASE_URI", "sqlite:///:memory:")
     monkeypatch.setenv("VULNSCOUT_AGENT_ENABLED", "1")
     monkeypatch.setenv("VULNSCOUT_CACHE_DIR", str(tmp_path))
@@ -271,6 +273,59 @@ def test_readiness_succeeds_with_runtime_skill_and_mcp(client):
     assert response.get_json() == {
         "ready": True, "errors": {}, "available_models": ["gpt-5.4"]}
     assert response.headers["Cache-Control"] == "no-store"
+
+
+def test_readiness_probes_read_only_api_without_credentials(client, monkeypatch):
+    import httpx
+    calls = []
+
+    def get(url, **kwargs):
+        calls.append((url, kwargs))
+        return httpx.Response(200, json=[])
+
+    monkeypatch.setattr(httpx, "get", get)
+    monkeypatch.setenv("VULNSCOUT_AGENT_API_URL", "http://localhost:7275")
+    assert client.put("/api/config/copilot", json={
+        "token": "github_pat_test", "model": "gpt-5.4"}).status_code == 200
+    response = client.post("/api/config/copilot/check")
+    assert response.get_json() == {
+        "ready": True, "errors": {}, "available_models": ["gpt-5.4"]}
+    assert calls == [("http://localhost:7275/api/projects",
+                      {"timeout": 2.0, "follow_redirects": False})]
+
+
+def test_readiness_reports_unavailable_read_tools(client, monkeypatch):
+    import httpx
+    monkeypatch.setenv("VULNSCOUT_AGENT_API_URL", "http://localhost:1")
+
+    def unavailable(*_args, **_kwargs):
+        raise httpx.ConnectError("private credential must not be shown")
+
+    monkeypatch.setattr(httpx, "get", unavailable)
+    assert client.put("/api/config/copilot", json={
+        "token": "github_pat_test", "model": "gpt-5.4"}).status_code == 200
+    response = client.post("/api/config/copilot/check")
+    data = response.get_json()
+    assert data["ready"] is False
+    assert data["available_models"] == ["gpt-5.4"]
+    assert "VULNSCOUT_AGENT_API_URL" in data["errors"]["mcp"]
+    assert "private credential" not in response.get_data(as_text=True)
+    assert "github_pat_test" not in response.get_data(as_text=True)
+
+
+@pytest.mark.parametrize("status,payload", [(503, []), (200, {"error": "wrong service"})])
+def test_readiness_rejects_non_read_tool_response(client, monkeypatch, status, payload):
+    import httpx
+
+    monkeypatch.setattr(httpx, "get",
+                        lambda *_args, **_kwargs: httpx.Response(status, json=payload))
+    assert client.put("/api/config/copilot", json={
+        "token": "github_pat_test", "model": "gpt-5.4"}).status_code == 200
+    data = client.post("/api/config/copilot/check").get_json()
+    assert data["ready"] is False
+    assert set(data) == {"ready", "errors", "available_models"}
+    assert set(data["errors"]) == {"mcp"}
+    assert data["available_models"] == ["gpt-5.4"]
 
 
 def test_readiness_rejects_missing_packaged_mcp_even_with_env_path(client, tmp_path, monkeypatch):

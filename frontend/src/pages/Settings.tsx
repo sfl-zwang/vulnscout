@@ -134,6 +134,7 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, initialTab }: Re
   const [copilotMessage, setCopilotMessage] = useState<FeedbackMsg>(null);
   const [copilotCheckMessage, setCopilotCheckMessage] = useState<FeedbackMsg>(null);
   const [copilotModels, setCopilotModels] = useState<string[]>([]);
+  const copilotCredentialVersion = useRef(0);
   const [confirmRemoveCopilot, setConfirmRemoveCopilot] = useState(false);
 
   // ---- Global data maintenance ----
@@ -371,6 +372,7 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, initialTab }: Re
 
   const handleSaveCopilotToken = async () => {
     if (copilotBusy || !copilotToken) return;
+    copilotCredentialVersion.current += 1;
     setCopilotBusy(true);
     setCopilotMessage(null);
     setCopilotCheckMessage(null);
@@ -378,6 +380,7 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, initialTab }: Re
       const status = await CopilotSettings.set({ token: copilotToken });
       if (unmountedRef.current) return;
       setCopilotStatus(status);
+      setCopilotModels([]);
       setCopilotToken("");
       setCopilotEditing(false);
       setCopilotMessage({ text: "Copilot token saved.", type: "success" });
@@ -389,6 +392,7 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, initialTab }: Re
   };
 
   const handleRemoveCopilotToken = async () => {
+    copilotCredentialVersion.current += 1;
     setConfirmRemoveCopilot(false);
     setCopilotBusy(true);
     setCopilotMessage(null);
@@ -397,6 +401,7 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, initialTab }: Re
       const status = await CopilotSettings.remove();
       if (unmountedRef.current) return;
       setCopilotStatus(status);
+      setCopilotModels([]);
       setCopilotToken("");
       setCopilotEditing(false);
       setCopilotMessage({ text: "Copilot token removed.", type: "success" });
@@ -427,18 +432,20 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, initialTab }: Re
 
   const handleCheckCopilot = async () => {
     if (copilotBusy || copilotChecking) return;
+    const credentialVersion = copilotCredentialVersion.current;
     setCopilotChecking(true);
     setCopilotCheckMessage(null);
     try {
       const result = await CopilotSettings.check();
-      if (unmountedRef.current) return;
+      if (unmountedRef.current || credentialVersion !== copilotCredentialVersion.current) return;
       setCopilotModels(result.available_models);
       const errors = Object.values(result.errors).filter(Boolean);
       setCopilotCheckMessage(result.ready
         ? { text: "Copilot connection is ready.", type: "success" }
         : { text: copilotError(errors.join(" ") || "Copilot connection is not ready.", "Copilot connection is not ready."), type: "error" });
     } catch (error) {
-      if (!unmountedRef.current) setCopilotCheckMessage({ text: copilotError(error, "Could not check Copilot connection."), type: "error" });
+      if (!unmountedRef.current && credentialVersion === copilotCredentialVersion.current)
+        setCopilotCheckMessage({ text: copilotError(error, "Could not check Copilot connection."), type: "error" });
     } finally {
       if (!unmountedRef.current) setCopilotChecking(false);
     }

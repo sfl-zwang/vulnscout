@@ -26,7 +26,7 @@ from ..models.project_context import ProjectContext
 from ..models.variant_context import VariantContext
 from .copilot_assessment_contract import CandidateError, Selection
 from .copilot_assessment_write import PendingSnapshot, save_candidates
-from .copilot_settings import MCP_SCRIPT, configured_model, read_token, valid_model
+from .copilot_settings import MCP_SCRIPT, read_token, valid_model
 from .job_context import CancelledError, JobContext, OperationError
 
 logger = logging.getLogger(__name__)
@@ -408,8 +408,8 @@ def run_assessment(
         raise OperationError("Configure a valid Copilot token before assessing") from None
     if not token:
         raise OperationError("Configure a Copilot token before assessing")
-    if not valid_model(model) or model != configured_model():
-        raise OperationError("Select the configured Copilot model")
+    if not valid_model(model):
+        raise OperationError("Select a valid Copilot model")
     if (not selection.targets
             or len({target.variant_id for target in selection.targets}) != len(selection.targets)):
         raise OperationError("Select exactly one package per variant")

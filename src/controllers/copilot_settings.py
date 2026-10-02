@@ -7,6 +7,8 @@ import secrets
 import stat
 from pathlib import Path
 
+import httpx
+
 
 _MODEL_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}\Z")
 MCP_SCRIPT = Path(__file__).resolve().parents[2] / "vulnscout_mcp/server.py"
@@ -99,6 +101,15 @@ def model_access_error(token: str, model: str) -> str | None:
     return errors.get("authentication") or errors.get("model")
 
 
+def _probe_read_tools() -> bool:
+    base_url = os.getenv("VULNSCOUT_AGENT_API_URL", "http://localhost:7275").rstrip("/")
+    try:
+        response = httpx.get(f"{base_url}/api/projects", timeout=2.0, follow_redirects=False)
+        return response.status_code == 200 and isinstance(response.json(), list)
+    except (httpx.HTTPError, ValueError):
+        return False
+
+
 async def _probe(token: str, model: str) -> tuple[dict[str, str], list[str]]:
     from copilot import CopilotClient
 
@@ -139,6 +150,11 @@ def check_readiness() -> dict:
         errors["skill"] = "The cve-assessment skill is not installed."
     if not MCP_SCRIPT.is_file():
         errors["mcp"] = "The packaged VulnScout MCP server script is unavailable."
+    elif not _probe_read_tools():
+        errors["mcp"] = (
+            "VulnScout read tools are unreachable. Check VULNSCOUT_AGENT_API_URL "
+            "and that its read-only /api/projects endpoint is available."
+        )
     if token:
         try:
             probe_errors, available_models = asyncio.run(_probe(token, model))

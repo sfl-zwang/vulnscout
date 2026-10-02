@@ -35,6 +35,7 @@ def client(monkeypatch, tmp_path):
         return {}, ["gpt-5.4"]
 
     monkeypatch.setattr(copilot_settings, "_probe", probe)
+    monkeypatch.setattr(copilot_settings, "_probe_read_tools", lambda: True)
     from src.bin.webapp import create_app
 
     scan_file = tmp_path / "scan_status.txt"
@@ -149,6 +150,20 @@ def test_queued_status_and_duplicate_scope(client, monkeypatch):
         f"/api/operations/{op_id}/cancel",
         environ_overrides={"REMOTE_ADDR": "192.0.2.1"},
     ).status_code == 403
+
+
+def test_queued_job_keeps_validated_model_after_settings_change(client, monkeypatch):
+    web, scope, _ = client
+    queued = []
+    captured = []
+    monkeypatch.setattr("src.routes.copilot_assessments.queue.submit",
+                        lambda _op_id, _lane, work, context: queued.append((work, context)))
+    monkeypatch.setattr("src.routes.copilot_assessments.run_assessment",
+                        lambda _ctx, _selection, model, _snapshot: captured.append(model))
+    assert web.post("/api/copilot-assessments", json=scope).status_code == 202
+    monkeypatch.setenv("COPILOT_MODEL", "other-model")
+    queued[0][0](queued[0][1])
+    assert captured == ["gpt-5.4"]
 
 
 def test_completion_exposes_assessment_ids(client, monkeypatch):
