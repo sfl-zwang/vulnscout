@@ -168,6 +168,12 @@ type VariantScopedSnapshot = {
     const assessmentListRequest = useRef(0);
     const assessmentRowsRequest = useRef(0);
     const completionRefresh = useRef(0);
+    // A closed modal must not write to the vulnerability shared with its replacement.
+    useEffect(() => () => {
+        ++assessmentListRequest.current;
+        ++assessmentRowsRequest.current;
+        ++completionRefresh.current;
+    }, []);
     const operations = useSyncExternalStore(subscribe, getSnapshot);
     const matchingAssessmentOperations = useMemo(() => operations.filter(op => op.kind === "assessment"
         && op.label === `Assess ${vuln.id}` && op.scope?.project_id === projectId),
