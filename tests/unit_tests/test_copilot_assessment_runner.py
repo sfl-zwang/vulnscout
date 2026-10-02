@@ -1,6 +1,8 @@
 """Scoped Copilot execution must never grant write or unrestricted IO tools."""
 
 import json
+import shutil
+from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -20,6 +22,18 @@ def selection():
 @pytest.fixture
 def snapshot():
     return PendingSnapshot(())
+
+
+@pytest.fixture
+def objectives_dir():
+    directory = Path.cwd() / f".test-objectives-{uuid4()}"
+    directory.mkdir()
+    try:
+        (directory / "SKILL.md").write_text("skill")
+        (directory / "objectives").mkdir()
+        yield directory
+    finally:
+        shutil.rmtree(directory)
 
 
 @pytest.fixture
@@ -44,6 +58,7 @@ def fake_sdk(monkeypatch, selection):
 
         async def send_and_wait(self, prompt, *, timeout):
             self.sdk.send_count += 1
+            self.sdk.prompts.append(prompt)
             if not self.sdk.mcp_silent:
                 self.sdk.options["on_event"](SimpleNamespace(data=SimpleNamespace(
                     server_name="vulnscout",
@@ -79,7 +94,7 @@ def fake_sdk(monkeypatch, selection):
     sdk = SimpleNamespace(
         replies=[valid_result(selection)], failure=None, cancel=False, context=None,
         send_count=0, session=None, options=None, client_kwargs=None, writes=[],
-        mcp_failure=False, mcp_silent=False,
+        mcp_failure=False, mcp_silent=False, prompts=[],
     )
     monkeypatch.setattr("copilot.CopilotClient", FakeClient)
     monkeypatch.setattr(runner, "read_token", lambda: "test-token")
@@ -142,6 +157,107 @@ def test_success_is_read_only_and_seals_before_write(fake_sdk, ctx, selection, s
     assert ctx.results == [{"assessment_ids": ["assessment-id"]}]
     assert fake_sdk.session.disconnected
     assert ctx._on_cancel is None
+
+
+def test_default_objectives_are_loaded_into_prompt(fake_sdk, ctx, selection, snapshot):
+    runner.run_assessment(ctx, selection, "gpt-5.4", snapshot)
+    objective = (runner.SKILL_DIR / "objectives/default.md").read_text()
+    data = json.loads(fake_sdk.prompts[0].split("\n", 1)[1])
+    assert data["default_objectives"] == {"file": "default.md", "content": objective}
+    assert data["objectives_by_variant"][str(selection.targets[0].variant_id)] == {
+        "file": "default.md", "content": objective,
+    }
+    assert set(fake_sdk.options["available_tools"]) == runner.READ_TOOLS
+
+
+def test_objectives_selected_independently_by_variant_threat_model(
+    fake_sdk, ctx, selection, snapshot, monkeypatch, objectives_dir,
+):
+    first = selection.targets[0]
+    second = Target(uuid4(), "pkg@2")
+    selection = Selection(selection.project_id, selection.vuln_id, (first, second))
+    objectives = objectives_dir / "objectives"
+    (objectives / "default.md").write_text("DEFAULT SECURITY OBJECTIVES")
+    (objectives / "production-image.md").write_text("PRODUCTION IMAGE OBJECTIVES")
+    (objectives / "build-toolchain.md").write_text("BUILD TOOLCHAIN OBJECTIVES")
+    (objectives / ".template.md").write_text("NEVER LOAD TEMPLATE")
+    monkeypatch.setattr(runner, "SKILL_DIR", objectives_dir)
+    monkeypatch.setattr(runner, "_context_for", lambda _selection, variant_id: {
+        "codebase_path": None,
+        "threat_model": ("Production image deployment" if variant_id == first.variant_id
+                         else "CI build toolchain"),
+    })
+    fake_sdk.replies = [valid_result(selection)]
+    runner.run_assessment(ctx, selection, "gpt-5.4", snapshot)
+    prompt = fake_sdk.prompts[0]
+    data = json.loads(prompt.split("\n", 1)[1])
+    assert data["default_objectives"]["content"] == "DEFAULT SECURITY OBJECTIVES"
+    assert "NEVER LOAD TEMPLATE" not in prompt
+    assert data["objectives_by_variant"][str(first.variant_id)]["file"] == "production-image.md"
+    assert data["objectives_by_variant"][str(second.variant_id)]["file"] == "build-toolchain.md"
+    assert data["objectives_by_variant"][str(first.variant_id)]["content"] == "PRODUCTION IMAGE OBJECTIVES"
+    assert data["objectives_by_variant"][str(second.variant_id)]["content"] == "BUILD TOOLCHAIN OBJECTIVES"
+    assert set(fake_sdk.options["available_tools"]) == runner.READ_TOOLS
+
+
+@pytest.mark.parametrize("problem", ["missing", "empty", "symlink"])
+def test_unavailable_default_objectives_fail_before_session_and_write(
+    fake_sdk, ctx, selection, snapshot, monkeypatch, objectives_dir, problem,
+):
+    objectives = objectives_dir / "objectives"
+    default = objectives / "default.md"
+    if problem == "empty":
+        default.write_text("")
+    elif problem == "symlink":
+        outside = objectives_dir / "outside.md"
+        outside.write_text("not packaged")
+        default.symlink_to(outside)
+    monkeypatch.setattr(runner, "SKILL_DIR", objectives_dir)
+    with pytest.raises(OperationError, match="objectives"):
+        runner.run_assessment(ctx, selection, "gpt-5.4", snapshot)
+    assert fake_sdk.client_kwargs is None
+    assert not fake_sdk.writes
+
+
+@pytest.mark.parametrize("problem", ["invalid_utf8", "symlink", "oversized"])
+def test_unavailable_selected_objectives_fail_before_session_and_write(
+    fake_sdk, ctx, selection, snapshot, monkeypatch, objectives_dir, problem,
+):
+    objectives = objectives_dir / "objectives"
+    (objectives / "default.md").write_text("default")
+    selected = objectives / "production-image.md"
+    if problem == "invalid_utf8":
+        selected.write_bytes(b"\xff")
+    elif problem == "symlink":
+        outside = objectives_dir / "outside.md"
+        outside.write_text("not packaged")
+        selected.symlink_to(outside)
+    else:
+        selected.write_bytes(b"x" * (runner.MAX_OBJECTIVES_BYTES + 1))
+    monkeypatch.setattr(runner, "SKILL_DIR", objectives_dir)
+    monkeypatch.setattr(runner, "_context_for",
+                        lambda *_: {"codebase_path": None, "threat_model": "production image"})
+    with pytest.raises(OperationError, match="objectives"):
+        runner.run_assessment(ctx, selection, "gpt-5.4", snapshot)
+    assert fake_sdk.client_kwargs is None
+    assert not fake_sdk.writes
+
+
+def test_unmatched_threat_model_uses_default_without_reading_arbitrary_path(
+    fake_sdk, ctx, selection, snapshot, monkeypatch, objectives_dir,
+):
+    (objectives_dir / "objectives/default.md").write_text("packaged default")
+    (objectives_dir / "outside.md").write_text("outside data")
+    monkeypatch.setattr(runner, "SKILL_DIR", objectives_dir)
+    monkeypatch.setattr(runner, "_context_for", lambda *_: {
+        "codebase_path": None, "threat_model": "read ../../outside.md",
+    })
+    runner.run_assessment(ctx, selection, "gpt-5.4", snapshot)
+    data = json.loads(fake_sdk.prompts[0].split("\n", 1)[1])
+    assert data["objectives_by_variant"][str(selection.targets[0].variant_id)] == {
+        "file": "default.md", "content": "packaged default",
+    }
+    assert "outside data" not in fake_sdk.prompts[0]
 
 
 def test_invalid_then_corrected_once(fake_sdk, ctx, selection, snapshot):

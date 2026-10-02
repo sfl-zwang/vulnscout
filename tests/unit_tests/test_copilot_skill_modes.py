@@ -30,6 +30,9 @@ def test_skill_has_both_modes():
     assert "vulnscout-update_ai_assessment" in interactive
     assert "/scan/project-source" in headless
     assert "symlinks" in headless
+    assert "default_objectives" in headless
+    assert "objectives_by_variant" in headless
+    assert "read-only prompt data" in headless
 
 
 def test_image_packages_skill_server_and_runtime():
