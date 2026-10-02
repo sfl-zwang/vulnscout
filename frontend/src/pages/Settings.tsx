@@ -27,6 +27,8 @@ import { waitForOperation } from "../handlers/operationStore";
 import type { Variant } from "../handlers/variant";
 import Config from "../handlers/config";
 import NvdApiKey from "../handlers/nvdApiKey";
+import CopilotSettings from "../handlers/copilotSettings";
+import type { CopilotStatus } from "../handlers/copilotSettings";
 import ScansHandler from "../handlers/scans";
 import type { EmptyScanPreview, OrphanedVulnerabilityPreview, OutdatedDataPreview } from "../handlers/scans";
 import ConfirmationModal from "../components/ConfirmationModal";
@@ -122,6 +124,17 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, initialTab }: Re
   const [nvdMsg, setNvdMsg] = useState<{ text: string; type: "success" | "error" } | null>(null);
   const [nvdEditing, setNvdEditing] = useState(false);
   const [confirmRemoveNvdKey, setConfirmRemoveNvdKey] = useState(false);
+
+  // ---- Instance-wide Copilot settings ----
+  const [copilotStatus, setCopilotStatus] = useState<CopilotStatus>({ has_token: false, masked_token: "", model: "" });
+  const [copilotToken, setCopilotToken] = useState("");
+  const [copilotEditing, setCopilotEditing] = useState(false);
+  const [copilotBusy, setCopilotBusy] = useState(false);
+  const [copilotChecking, setCopilotChecking] = useState(false);
+  const [copilotMessage, setCopilotMessage] = useState<FeedbackMsg>(null);
+  const [copilotCheckMessage, setCopilotCheckMessage] = useState<FeedbackMsg>(null);
+  const [copilotModels, setCopilotModels] = useState<string[]>([]);
+  const [confirmRemoveCopilot, setConfirmRemoveCopilot] = useState(false);
 
   // ---- Global data maintenance ----
   const [confirmDeleteOutdatedData, setConfirmDeleteOutdatedData] = useState(false);
@@ -338,6 +351,96 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, initialTab }: Re
       setNvdMsg({ text: "Failed to remove NVD API key.", type: "error" });
     } finally {
       if (!unmountedRef.current) setNvdBusy(false);
+    }
+  };
+
+  useEffect(() => {
+    CopilotSettings.get()
+      .then((status) => {
+        if (!unmountedRef.current) setCopilotStatus(status);
+      })
+      .catch(() => {
+        if (!unmountedRef.current) setCopilotMessage({ text: "Failed to load Copilot settings.", type: "error" });
+      });
+  }, []);
+
+  const copilotError = (error: unknown, fallback: string) => {
+    const text = error instanceof Error ? error.message : typeof error === "string" ? error : fallback;
+    return copilotToken && text.includes(copilotToken) ? fallback : text;
+  };
+
+  const handleSaveCopilotToken = async () => {
+    if (copilotBusy || !copilotToken) return;
+    setCopilotBusy(true);
+    setCopilotMessage(null);
+    setCopilotCheckMessage(null);
+    try {
+      const status = await CopilotSettings.set({ token: copilotToken });
+      if (unmountedRef.current) return;
+      setCopilotStatus(status);
+      setCopilotToken("");
+      setCopilotEditing(false);
+      setCopilotMessage({ text: "Copilot token saved.", type: "success" });
+    } catch (error) {
+      if (!unmountedRef.current) setCopilotMessage({ text: copilotError(error, "Failed to save Copilot token."), type: "error" });
+    } finally {
+      if (!unmountedRef.current) setCopilotBusy(false);
+    }
+  };
+
+  const handleRemoveCopilotToken = async () => {
+    setConfirmRemoveCopilot(false);
+    setCopilotBusy(true);
+    setCopilotMessage(null);
+    setCopilotCheckMessage(null);
+    try {
+      const status = await CopilotSettings.remove();
+      if (unmountedRef.current) return;
+      setCopilotStatus(status);
+      setCopilotToken("");
+      setCopilotEditing(false);
+      setCopilotMessage({ text: "Copilot token removed.", type: "success" });
+    } catch (error) {
+      if (!unmountedRef.current) setCopilotMessage({ text: copilotError(error, "Failed to remove Copilot token."), type: "error" });
+    } finally {
+      if (!unmountedRef.current) setCopilotBusy(false);
+    }
+  };
+
+  const handleSelectCopilotModel = async (model: string) => {
+    if (copilotBusy || !model || model === copilotStatus.model) return;
+    setCopilotBusy(true);
+    setCopilotMessage(null);
+    setCopilotCheckMessage(null);
+    try {
+      const status = await CopilotSettings.set({ model });
+      if (!unmountedRef.current) {
+        setCopilotStatus(status);
+        setCopilotMessage({ text: "Copilot model saved.", type: "success" });
+      }
+    } catch (error) {
+      if (!unmountedRef.current) setCopilotMessage({ text: copilotError(error, "Failed to save Copilot model."), type: "error" });
+    } finally {
+      if (!unmountedRef.current) setCopilotBusy(false);
+    }
+  };
+
+  const handleCheckCopilot = async () => {
+    if (copilotBusy || copilotChecking) return;
+    setCopilotChecking(true);
+    setCopilotCheckMessage(null);
+    try {
+      const result = await CopilotSettings.check();
+      if (unmountedRef.current) return;
+      setCopilotModels(result.available_models);
+      const errors = Object.values(result.errors).filter(Boolean);
+      setCopilotCheckMessage(result.ready
+        ? { text: "Copilot connection is ready.", type: "success" }
+        : { text: copilotError(errors.join(" ") || "Copilot connection is not ready.", "Copilot connection is not ready."), type: "error" });
+    } catch (error) {
+      if (!unmountedRef.current) setCopilotCheckMessage({ text: copilotError(error, "Could not check Copilot connection."), type: "error" });
+    } finally {
+      if (!unmountedRef.current) setCopilotChecking(false);
     }
   };
 
@@ -1115,6 +1218,81 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, initialTab }: Re
           </div>
         </section>
 
+        <section aria-labelledby="settings-heading-copilot">
+          <div className={cardHeader}>
+            <FontAwesomeIcon icon={faGear} className="text-cyan-400" aria-hidden="true" />
+            <h2 id="settings-heading-copilot" className="text-xl font-bold text-white">Copilot</h2>
+          </div>
+          <div className={cardBody + " space-y-3"}>
+            <p className="text-zinc-400 text-sm">
+              Configure one Copilot credential and model for this instance. Check connection verifies readiness without starting an assessment.
+            </p>
+            {copilotMessage && (
+              <div role="status" className={`text-sm rounded px-3 py-2 ${copilotMessage.type === "success" ? "bg-green-900/40 text-green-300" : "bg-red-900/40 text-red-300"}`}>
+                {copilotMessage.text}
+              </div>
+            )}
+            {copilotStatus.has_token && (
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-sm text-zinc-300">Copilot token:</span>
+                <code className="text-sm text-zinc-300 bg-slate-900 px-2 py-0.5 rounded font-mono">{copilotStatus.masked_token}</code>
+                {!copilotEditing && (
+                  <button type="button" onClick={() => { setCopilotEditing(true); setCopilotMessage(null); }}
+                    disabled={copilotBusy} className={btnPrimary + " text-xs py-1 px-3"}>Change</button>
+                )}
+                <button type="button" onClick={() => setConfirmRemoveCopilot(true)}
+                  disabled={copilotBusy || copilotChecking}
+                  className="px-3 py-1 rounded text-xs font-semibold bg-red-800 hover:bg-red-700 text-white disabled:opacity-40 transition-colors">
+                  Remove
+                </button>
+              </div>
+            )}
+            <div className="space-y-2">
+              <label htmlFor="copilot-token-input" className="block text-sm text-zinc-300 font-semibold">Copilot token</label>
+              <input id="copilot-token-input" type="password" value={copilotToken}
+                onChange={(event) => setCopilotToken(event.target.value)}
+                placeholder="Paste your Copilot token..."
+                className={inputClass} disabled={copilotBusy || (copilotStatus.has_token && !copilotEditing)}
+                autoComplete="new-password" />
+              {(!copilotStatus.has_token || copilotEditing) && (
+                <div className="flex items-center gap-2">
+                  <button type="button" onClick={handleSaveCopilotToken}
+                    disabled={copilotBusy || !copilotToken} aria-busy={copilotBusy}
+                    className={btnPrimary}>Save Copilot token</button>
+                  {copilotEditing && (
+                    <button type="button" onClick={() => { setCopilotEditing(false); setCopilotToken(""); setCopilotMessage(null); }}
+                      disabled={copilotBusy}
+                      className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-white text-sm font-semibold disabled:opacity-40 transition-colors">
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+            <div className="space-y-2">
+              <label htmlFor="copilot-model-select" className="block text-sm text-zinc-300 font-semibold">Copilot model</label>
+              <select id="copilot-model-select" className={inputClass}
+                value={copilotStatus.model}
+                onChange={(event) => void handleSelectCopilotModel(event.target.value)}
+                disabled={copilotBusy || copilotChecking || !copilotStatus.has_token}>
+                <option value="">Select a model (check connection to list available models)</option>
+                {copilotStatus.model && !copilotModels.includes(copilotStatus.model) && (
+                  <option value={copilotStatus.model}>{copilotStatus.model} (configured; availability unknown)</option>
+                )}
+                {copilotModels.map((model) => <option key={model} value={model}>{model}</option>)}
+              </select>
+            </div>
+            <button type="button" className={btnPrimary}
+              onClick={handleCheckCopilot} disabled={copilotBusy || copilotChecking}
+              aria-busy={copilotChecking}>Check connection</button>
+            {copilotCheckMessage && (
+              <div role="status" className={`text-sm rounded px-3 py-2 ${copilotCheckMessage.type === "success" ? "bg-green-900/40 text-green-300" : "bg-red-900/40 text-red-300"}`}>
+                {copilotCheckMessage.text}
+              </div>
+            )}
+          </div>
+        </section>
+
         {/* ======== Grype Scanner ======== */}
         <section aria-labelledby="settings-heading-grype">
           <div className={cardHeader}>
@@ -1749,6 +1927,16 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, initialTab }: Re
         onConfirm={handleRemoveNvdKey}
         onCancel={() => setConfirmRemoveNvdKey(false)}
       />
+      <ConfirmationModal
+        isOpen={confirmRemoveCopilot}
+        title="Remove Copilot token"
+        message="Remove the instance-wide Copilot credential? Copilot assessments will be unavailable until a new token is configured."
+        confirmText="Remove token"
+        cancelText="Cancel"
+        showTitleIcon={true}
+        onConfirm={handleRemoveCopilotToken}
+        onCancel={() => setConfirmRemoveCopilot(false)}
+      />
       <ModalShell
         isOpen={pendingCleanup !== null}
         title={pendingCleanup?.kind === "empty-scans" ? "Delete Empty Scans" : "Delete Orphaned CVEs"}
@@ -1793,4 +1981,3 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, initialTab }: Re
 }
 
 export default Settings;
-

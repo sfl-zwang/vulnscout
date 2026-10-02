@@ -6,6 +6,7 @@ import Projects from "../../src/handlers/project";
 import Variants from "../../src/handlers/variant";
 import Config from "../../src/handlers/config";
 import NvdApiKey from "../../src/handlers/nvdApiKey";
+import CopilotSettings from "../../src/handlers/copilotSettings";
 import ScansHandler from "../../src/handlers/scans";
 import { __reset, __setEventSourceFactory } from "../../src/handlers/operationStore";
 
@@ -40,6 +41,11 @@ jest.mock("../../src/handlers/config", () => ({
 jest.mock("../../src/handlers/nvdApiKey", () => ({
   __esModule: true,
   default: { get: jest.fn(), set: jest.fn(), remove: jest.fn() },
+}));
+
+jest.mock("../../src/handlers/copilotSettings", () => ({
+  __esModule: true,
+  default: { get: jest.fn(), set: jest.fn(), remove: jest.fn(), check: jest.fn() },
 }));
 
 jest.mock("../../src/handlers/scans", () => ({
@@ -94,6 +100,7 @@ describe("Settings scoped project and variant views", () => {
       grype_memlimit: "",
     });
     nvdApiKeyGet.mockResolvedValue({ has_key: false, masked_key: "" });
+    (CopilotSettings.get as jest.Mock).mockResolvedValue({ has_token: false, masked_token: "", model: "" });
     configPatch.mockImplementation(async (data) => ({
       project: null,
       variant: null,
