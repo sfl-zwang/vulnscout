@@ -16,6 +16,7 @@ from src.controllers.operation_queue import OperationQueue
 from src.controllers.operation_registry import (
     LANE_EXPORT,
     LANE_PIPELINE,
+    LANE_UPLOAD,
     STATUS_CANCELLED,
     STATUS_DONE,
     STATUS_ERROR,
@@ -71,6 +72,28 @@ def _wait_for(op_id, status, timeout=5.0):
         f"{op_id} never reached {status}; last state="
         f"{actual['status'] if actual else 'missing'}"
     )
+
+
+def test_cancel_is_rejected_after_persistence_seal(op_queue):
+    op_id = "scan:sealed"
+    _create(op_id, lane=LANE_UPLOAD)
+    ctx = JobContext(op_id)
+    sealed = threading.Event()
+    release = threading.Event()
+
+    def run(job_ctx):
+        assert job_ctx.seal_cancellation()
+        sealed.set()
+        assert release.wait(5)
+
+    op_queue.submit(op_id, LANE_UPLOAD, run, ctx)
+    try:
+        assert sealed.wait(5)
+        assert op_queue.cancel(op_id) is False
+        assert not ctx.is_cancelled()
+    finally:
+        release.set()
+    assert _wait_for(op_id, STATUS_DONE)["status"] == STATUS_DONE
 
 
 # ---------------------------------------------------------------------------

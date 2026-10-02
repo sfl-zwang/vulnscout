@@ -43,27 +43,40 @@ class JobContext:
         self._total = 0
         self._last_flush = 0.0
         self._on_cancel: Optional[Callable[[], None]] = None
+        self._cancellation_sealed = False
 
     # ------------------------------------------------------------------
     # Cancellation
     # ------------------------------------------------------------------
 
-    def request_cancel(self) -> None:
+    def request_cancel(self) -> bool:
         with self._lock:
+            if self._cancellation_sealed:
+                return False
             self._cancel.set()
             on_cancel = self._on_cancel
         if on_cancel is not None:
             on_cancel()
+        return True
 
     def set_cancel_hook(self, hook: Optional[Callable[[], None]]) -> None:
         """Register a callback that aborts blocking work (e.g. kills a subprocess)."""
         invoke_now: Optional[Callable[[], None]] = None
         with self._lock:
             self._on_cancel = hook
-            if hook is not None and self._cancel.is_set():
+            if hook is not None and self._cancel.is_set() and not self._cancellation_sealed:
                 invoke_now = hook
         if invoke_now is not None:
             invoke_now()
+
+    def seal_cancellation(self) -> bool:
+        """Atomically reserve the final non-cancellable persistence phase."""
+        with self._lock:
+            if self._cancel.is_set():
+                return False
+            self._cancellation_sealed = True
+            self._on_cancel = None
+            return True
 
     def is_cancelled(self) -> bool:
         return self._cancel.is_set()

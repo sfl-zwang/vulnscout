@@ -167,7 +167,8 @@ class OperationQueue:
                 return True
             running = lane.running_job(op_id)
             if running is not None:
-                running.ctx.request_cancel()
+                if not running.ctx.request_cancel():
+                    return False
                 registry.update(op_id, append_logs=["Cancellation requested"])
                 return True
         return False

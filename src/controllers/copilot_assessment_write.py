@@ -117,7 +117,8 @@ def save_candidates(
             if db.engine.dialect.name == "sqlite":
                 # Reserve the writer slot across processes before reading pending work.
                 connection = db.session.connection()
-                if connection.connection.driver_connection.in_transaction:
+                driver = connection.connection.driver_connection
+                if driver is None or driver.in_transaction:
                     raise RuntimeError("Copilot save requires a fresh SQLite transaction")
                 connection.exec_driver_sql("BEGIN IMMEDIATE")
             resolved = [(dto_for(selection, group), exact_findings(selection, group))
