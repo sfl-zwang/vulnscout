@@ -1,4 +1,6 @@
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace
 
 import pytest
@@ -334,3 +336,97 @@ def test_model_write_failure_restores_previous_credentials_and_model(
     for secret in ("github_pat_test", "github_pat_new"):
         assert secret not in response.get_data(as_text=True)
         assert secret not in caplog.text
+
+
+def test_failed_put_cannot_resurrect_concurrent_delete(client, tmp_path, monkeypatch):
+    from src.controllers import copilot_settings
+    from src.routes import config
+
+    assert client.put("/api/config/copilot", json={
+        "token": "github_pat_test", "model": "gpt-5.4"}).status_code == 200
+    monkeypatch.setattr(copilot_settings, "model_access_error", lambda *_: None)
+    model_write_started = threading.Event()
+    allow_model_write_failure = threading.Event()
+    delete_started = threading.Event()
+    delete_finished = threading.Event()
+
+    def fail_model_write(key, value):
+        assert (key, value) == ("COPILOT_MODEL", "other-model")
+        model_write_started.set()
+        assert allow_model_write_failure.wait(timeout=5)
+        return False
+
+    monkeypatch.setattr(config, "_write_config_key", fail_model_write)
+
+    def put():
+        with client.application.test_client() as request_client:
+            return request_client.put("/api/config/copilot", json={
+                "token": "github_pat_new", "model": "other-model"})
+
+    def delete():
+        delete_started.set()
+        with client.application.test_client() as request_client:
+            try:
+                return request_client.delete("/api/config/copilot")
+            finally:
+                delete_finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        put_result = executor.submit(put)
+        try:
+            assert model_write_started.wait(timeout=5)
+            delete_result = executor.submit(delete)
+            assert delete_started.wait(timeout=5)
+            assert not delete_finished.wait(timeout=0.2)
+        finally:
+            allow_model_write_failure.set()
+        assert put_result.result(timeout=5).status_code == 500
+        assert delete_result.result(timeout=5).status_code == 200
+
+    assert copilot_settings.read_token() is None
+    assert not (tmp_path / "copilot-token").exists()
+    assert client.get("/api/config").get_json()["copilot_model"] == "gpt-5.4"
+
+
+def test_model_patch_finishes_before_concurrent_delete(client, monkeypatch, tmp_path):
+    from src.controllers import copilot_settings
+
+    assert client.put("/api/config/copilot", json={"token": "github_pat_test"}).status_code == 200
+    model_check_started = threading.Event()
+    allow_model_check = threading.Event()
+    delete_started = threading.Event()
+    delete_finished = threading.Event()
+
+    def check_model(_token, _model):
+        model_check_started.set()
+        assert allow_model_check.wait(timeout=5)
+        return None
+
+    monkeypatch.setattr(copilot_settings, "model_access_error", check_model)
+
+    def patch():
+        with client.application.test_client() as request_client:
+            return request_client.patch("/api/config", json={"copilot_model": "gpt-5.4"})
+
+    def delete():
+        delete_started.set()
+        with client.application.test_client() as request_client:
+            try:
+                return request_client.delete("/api/config/copilot")
+            finally:
+                delete_finished.set()
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        patch_result = executor.submit(patch)
+        try:
+            assert model_check_started.wait(timeout=5)
+            delete_result = executor.submit(delete)
+            assert delete_started.wait(timeout=5)
+            assert not delete_finished.wait(timeout=0.2)
+        finally:
+            allow_model_check.set()
+        assert patch_result.result(timeout=5).status_code == 200
+        assert delete_result.result(timeout=5).status_code == 200
+
+    assert copilot_settings.read_token() is None
+    assert "COPILOT_MODEL=gpt-5.4" in (tmp_path / "config.env").read_text()

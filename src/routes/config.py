@@ -4,6 +4,8 @@
 import os
 import re
 import fcntl
+from functools import wraps
+from threading import RLock
 from flask import jsonify, request
 
 from ..controllers.projects import ProjectController
@@ -21,6 +23,15 @@ _GRYPE_MEMLIMIT_RE = re.compile(
     r'^(?:off|disabled|\d+(?:[KMGTPE]iB|[KMGTPE]B|B)?)$',
     re.IGNORECASE,
 )
+_copilot_update_lock = RLock()
+
+
+def _serialize_copilot_update(route):
+    @wraps(route)
+    def wrapped(*args, **kwargs):
+        with _copilot_update_lock:
+            return route(*args, **kwargs)
+    return wrapped
 
 
 def _config_file_path() -> str:
@@ -110,6 +121,7 @@ def init_app(app):
         })
 
     @app.route('/api/config', methods=['PATCH'])
+    @_serialize_copilot_update
     def patch_config():
         """Update mutable configuration keys and persist them to config.env.
 
@@ -223,6 +235,7 @@ def init_app(app):
         return _copilot_response()
 
     @app.route('/api/config/copilot', methods=['PUT'])
+    @_serialize_copilot_update
     def put_copilot():
         if error := access_error():
             return error
@@ -276,6 +289,7 @@ def init_app(app):
         return _copilot_response()
 
     @app.route('/api/config/copilot', methods=['DELETE'])
+    @_serialize_copilot_update
     def delete_copilot():
         if error := access_error():
             return error
