@@ -47,12 +47,24 @@ export const SETTINGS_PATHS = {
 // Projects live under their own prefix so a project named like a section ("transfer") stays reachable.
 const SETTINGS_PROJECTS_PATH = `${ROUTES.settings}/projects`;
 
+// Browsers collapse "." and ".." segments (even percent-encoded), so those names get a "~" marker;
+// names that already start with "~" are marked too, which keeps decoding unambiguous.
+function encodeNameSegment(name: string): string {
+    const encoded = encodeURIComponent(name);
+    return /^\.+$/.test(name) || name.startsWith('~') ? `~${encoded}` : encoded;
+}
+
+function decodeNameSegment(segment: string): string {
+    const decoded = decodeURIComponent(segment);
+    return segment.startsWith('~') ? decoded.slice(1) : decoded;
+}
+
 export function settingsProjectPath(projectName: string): string {
-    return `${SETTINGS_PROJECTS_PATH}/${encodeURIComponent(projectName)}`;
+    return `${SETTINGS_PROJECTS_PATH}/${encodeNameSegment(projectName)}`;
 }
 
 export function settingsVariantPath(projectName: string, variantName: string): string {
-    return `${settingsProjectPath(projectName)}/${encodeURIComponent(variantName)}`;
+    return `${settingsProjectPath(projectName)}/${encodeNameSegment(variantName)}`;
 }
 
 export type SettingsRoute =
@@ -71,7 +83,9 @@ export function parseSettingsPath(pathname: string): SettingsRoute {
 
     let segments: string[];
     try {
-        segments = path.slice(ROUTES.settings.length + 1).split('/').map(decodeURIComponent);
+        segments = path.slice(ROUTES.settings.length + 1).split('/');
+        if (segments.some((segment) => segment === '')) return { kind: 'unknown' };
+        segments = segments.map(decodeNameSegment);
     } catch {
         return { kind: 'unknown' };
     }

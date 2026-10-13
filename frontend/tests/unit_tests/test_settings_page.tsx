@@ -1083,6 +1083,27 @@ describe("Settings scoped project and variant views", () => {
     expect(screen.getByRole("heading", { name: "Import SBOM" })).toBeInTheDocument();
   });
 
+  test("a stale project list does not overwrite a just-created project", async () => {
+    const initialList = deferred<typeof project[]>();
+    const zeus = { id: "project-2", name: "Zeus" };
+    projectsList.mockReturnValueOnce(initialList.promise).mockResolvedValue([project, zeus]);
+    renderSettings();
+    fireEvent.click(await screen.findByRole("button", { name: "New Project" }));
+    fireEvent.change(screen.getByLabelText("New project name"), { target: { value: "Zeus" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    expect(await screen.findByText('Project "Zeus" created.')).toBeInTheDocument();
+    await act(async () => initialList.resolve([project]));
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Zeus");
+    expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Rename Project" })).toBeInTheDocument();
+  });
+
+  test("a project named '..' opens through its marked URL", async () => {
+    projectsList.mockResolvedValue([{ id: "project-3", name: ".." }]);
+    renderSettings("/settings/projects/~..");
+    expect(await screen.findByRole("heading", { name: "Rename Project" })).toBeInTheDocument();
+  });
+
   test("a project created after a failed initial load opens its page", async () => {
     projectsList.mockRejectedValueOnce(new Error("boom")).mockResolvedValue([project, { id: "project-2", name: "Zeus" }]);
     renderSettings();

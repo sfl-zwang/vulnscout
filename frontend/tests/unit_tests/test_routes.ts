@@ -65,4 +65,16 @@ describe('settings sub-routes', () => {
             kind: 'variant', projectName: name, variantName: 'v1',
         });
     });
+
+    test.each(['.', '..', '...', '~', '~x', '.hidden'])('name %s round-trips and survives dot-segment normalization', (name) => {
+        const path = settingsVariantPath(name, name);
+        expect(new URL(path, 'http://localhost').pathname).toBe(path);
+        expect(parseSettingsPath(path)).toEqual({ kind: 'variant', projectName: name, variantName: name });
+        expect(parseSettingsPath(settingsProjectPath(name))).toEqual({ kind: 'project', projectName: name });
+    });
+
+    test('dot-only names are marked, plain names are untouched', () => {
+        expect(settingsProjectPath('..')).toBe('/settings/projects/~..');
+        expect(settingsProjectPath('a.b')).toBe('/settings/projects/a.b');
+    });
 });
