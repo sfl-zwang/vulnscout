@@ -102,6 +102,11 @@ function StateProbe() {
   return <span data-testid="state">{JSON.stringify(location.state)}</span>;
 }
 
+function NavButton({ to }: Readonly<{ to: string }>) {
+  const navigate = useNavigate();
+  return <button onClick={() => navigate(to)}>go</button>;
+}
+
 function renderFull(pathname: string, search: string, hash: string, state: unknown) {
   return render(
     <MemoryRouter initialEntries={[{ pathname, search, hash, state }]}>
@@ -250,7 +255,7 @@ describe("Settings scoped project and variant views", () => {
   });
 
   test("opens a project from its URL", async () => {
-    renderSettings("/settings/Apollo");
+    renderSettings("/settings/projects/Apollo");
 
     expect(await screen.findByDisplayValue("Apollo")).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Rename Project" })).toBeInTheDocument();
@@ -259,15 +264,15 @@ describe("Settings scoped project and variant views", () => {
   test.each([
     ["/settings", "Report Metadata"],
     ["/settings/transfer", "Copy Custom Assessments"],
-    ["/settings/Apollo", "Rename Project"],
-    ["/settings/Apollo/", "Rename Project"],
-    ["/settings/Apollo/Release", "Import SBOM"],
+    ["/settings/projects/Apollo", "Rename Project"],
+    ["/settings/projects/Apollo/", "Rename Project"],
+    ["/settings/projects/Apollo/Release", "Import SBOM"],
   ])("renders %s", async (path, heading) => {
     renderSettings(path);
     expect(await screen.findByRole("heading", { name: heading })).toBeInTheDocument();
   });
 
-  test.each(["/settings/missing", "/settings/Apollo/missing", "/settings/Apollo/Release/extra"])(
+  test.each(["/settings/missing", "/settings/projects/Apollo/missing", "/settings/projects/Apollo/Release/extra"])(
     "shows the 404 page for %s", async (path) => {
       renderSettings(path);
       expect(await screen.findByText("Page not found")).toBeInTheDocument();
@@ -276,7 +281,7 @@ describe("Settings scoped project and variant views", () => {
   test("does not flash 404 while a deep-linked variant loads", async () => {
     let resolveProjects!: (value: typeof project[]) => void;
     projectsList.mockReturnValueOnce(new Promise((resolve) => { resolveProjects = resolve; }));
-    renderSettings("/settings/Apollo/Release");
+    renderSettings("/settings/projects/Apollo/Release");
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
     await act(async () => resolveProjects([project]));
     expect(await screen.findByRole("heading", { name: "Import SBOM" })).toBeInTheDocument();
@@ -286,21 +291,21 @@ describe("Settings scoped project and variant views", () => {
 
   test("a failed initial projects load on a project deep link shows an error, not 404", async () => {
     projectsList.mockRejectedValue(new Error("boom"));
-    renderSettings("/settings/Apollo");
+    renderSettings("/settings/projects/Apollo");
     expect(await screen.findByText("Could not load projects.")).toHaveAttribute("role", "alert");
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
   });
 
   test("a failed variant list load on a variant deep link shows an error, not 404", async () => {
     variantsList.mockRejectedValue(new Error("boom"));
-    renderSettings("/settings/Apollo/Release");
+    renderSettings("/settings/projects/Apollo/Release");
     expect(await screen.findByText("Could not load variants.")).toHaveAttribute("role", "alert");
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
   });
 
   test("a failed project list reload after a rename keeps the page", async () => {
     projectsList.mockResolvedValueOnce([project]).mockRejectedValue(new Error("boom"));
-    renderSettings("/settings/Apollo");
+    renderSettings("/settings/projects/Apollo");
     fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Apollo Renamed" } });
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
     expect(await screen.findByText("Project renamed.")).toBeInTheDocument();
@@ -315,29 +320,29 @@ describe("Settings scoped project and variant views", () => {
     const zeusRelease = { id: "variant-3", name: "Release", project_id: zeus.id };
     projectsList.mockResolvedValue([project, zeus]);
     variantsList.mockImplementation(async (projectId) => (projectId === zeus.id ? [zeusRelease] : [variant]));
-    renderSettings("/settings/Apollo/Release");
+    renderSettings("/settings/projects/Apollo/Release");
     fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Stale edit" } });
     fireEvent.click(screen.getByRole("button", { name: "Expand Zeus" }));
     fireEvent.click(screen.getAllByRole("button", { name: "Release" })[1]);
-    expect(screen.getByTestId("location")).toHaveTextContent("/settings/Zeus/Release");
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Zeus/Release");
     await waitFor(() => expect(screen.getByLabelText("New name")).toHaveValue("Release"));
   });
 
   test("renaming a project moves the URL to the new name", async () => {
-    renderSettings("/settings/Apollo");
+    renderSettings("/settings/projects/Apollo");
     fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Apollo Renamed" } });
     projectsList.mockResolvedValue([{ ...project, name: "Apollo Renamed" }]);
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/Apollo%20Renamed"));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo%20Renamed"));
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
   });
 
   test("renaming a variant moves the URL to the new name", async () => {
-    renderSettings("/settings/Apollo/Release");
+    renderSettings("/settings/projects/Apollo/Release");
     fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Release Renamed" } });
     variantsList.mockResolvedValue([{ ...variant, name: "Release Renamed" }]);
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/Apollo/Release%20Renamed"));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo/Release%20Renamed"));
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
   });
 
@@ -360,7 +365,7 @@ describe("Settings scoped project and variant views", () => {
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings$/));
     expect(screen.queryByText('Project "Zeus" created.')).not.toBeInTheDocument();
     fireEvent.click(screen.getByRole("button", { name: "History forward" }));
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/Zeus"));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Zeus"));
     expect(await screen.findByRole("heading", { name: "Rename Project" })).toBeInTheDocument();
     expect(screen.queryByText('Project "Zeus" created.')).not.toBeInTheDocument();
   });
@@ -368,11 +373,11 @@ describe("Settings scoped project and variant views", () => {
   test("tree, sidebar and breadcrumbs drive the URL", async () => {
     renderSettings();
     fireEvent.click(await screen.findByRole("button", { name: /^Apollo/ }));
-    expect(screen.getByTestId("location")).toHaveTextContent("/settings/Apollo");
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo");
     fireEvent.click(await screen.findByRole("button", { name: "Release" }));
-    expect(screen.getByTestId("location")).toHaveTextContent("/settings/Apollo/Release");
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo/Release");
     fireEvent.click(screen.getByRole("button", { name: "Go to Apollo" }));
-    expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings\/Apollo$/);
+    expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings\/projects\/Apollo$/);
     fireEvent.click(screen.getByRole("button", { name: "Go to Settings" }));
     expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings$/);
     fireEvent.click(screen.getByRole("button", { name: "Transfer Assessments" }));
@@ -387,10 +392,10 @@ describe("Settings scoped project and variant views", () => {
     fireEvent.change(screen.getByLabelText("New project name"), { target: { value: "Zeus" } });
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
     expect(await screen.findByText('Project "Zeus" created.')).toBeInTheDocument();
-    expect(screen.getByTestId("location")).toHaveTextContent("/settings/Zeus");
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Zeus");
     fireEvent.click(screen.getByText('Project "Zeus" created.').closest('[role="alert"]')!.querySelector("button")!);
     await waitFor(() => expect(screen.queryByText('Project "Zeus" created.')).not.toBeInTheDocument());
-    expect(screen.getByTestId("location")).toHaveTextContent("/settings/Zeus");
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Zeus");
   });
 
   test("a created project is not reported as failed when the list reload fails", async () => {
@@ -401,7 +406,7 @@ describe("Settings scoped project and variant views", () => {
     fireEvent.change(screen.getByLabelText("New project name"), { target: { value: "Zeus" } });
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
     expect(await screen.findByText('Project "Zeus" created.')).toBeInTheDocument();
-    expect(screen.getByTestId("location")).toHaveTextContent("/settings/Zeus");
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Zeus");
     expect(screen.queryByText("List failed")).not.toBeInTheDocument();
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Rename Project" })).toBeInTheDocument();
@@ -416,18 +421,18 @@ describe("Settings scoped project and variant views", () => {
     fireEvent.change(screen.getByLabelText("New variant name"), { target: { value: "Next" } });
     fireEvent.keyDown(screen.getByLabelText("New variant name"), { key: "Enter" });
     expect(await screen.findByText('Variant "Next" created.')).toBeInTheDocument();
-    expect(screen.getByTestId("location")).toHaveTextContent("/settings/Apollo/Next");
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo/Next");
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
   });
 
   test("a created variant is not reported as failed when the list reload fails", async () => {
     variantsList.mockResolvedValueOnce([variant]).mockRejectedValue(new Error("List failed"));
-    renderSettings("/settings/Apollo");
+    renderSettings("/settings/projects/Apollo");
     fireEvent.click(await screen.findByRole("button", { name: "Add Variant" }));
     fireEvent.change(screen.getByLabelText("New variant name"), { target: { value: "Next" } });
     fireEvent.keyDown(screen.getByLabelText("New variant name"), { key: "Enter" });
     expect(await screen.findByText('Variant "Next" created.')).toBeInTheDocument();
-    expect(screen.getByTestId("location")).toHaveTextContent("/settings/Apollo/Next");
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo/Next");
     expect(screen.queryByText("List failed")).not.toBeInTheDocument();
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Import SBOM" })).toBeInTheDocument();
@@ -450,7 +455,7 @@ describe("Settings scoped project and variant views", () => {
   });
 
   test("deleting a project returns to /settings", async () => {
-    renderSettings("/settings/Apollo");
+    renderSettings("/settings/projects/Apollo");
     fireEvent.click(await screen.findByRole("button", { name: "Delete Project" }));
     fireEvent.click(await screen.findByRole("button", { name: "Yes, delete" }));
     await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings$/));
@@ -583,7 +588,7 @@ describe("Settings scoped project and variant views", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Yes, delete" }));
     await waitFor(() => expect(variantsDelete).toHaveBeenCalledWith(variant.id));
     await waitFor(() => expect(screen.queryByRole("button", { name: "Delete Release" })).not.toBeInTheDocument());
-    expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings\/Apollo$/);
+    expect(screen.getByTestId("location")).toHaveTextContent(/^\/settings\/projects\/Apollo$/);
     expect(screen.getByRole("heading", { name: "Rename Project" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Import SBOM" })).not.toBeInTheDocument();
   });
@@ -1022,7 +1027,7 @@ describe("Settings scoped project and variant views", () => {
   test("a variant created after leaving Settings does not navigate back", async () => {
     const pending = deferred<typeof variant>();
     variantsCreate.mockReturnValueOnce(pending.promise);
-    renderSettingsWithExit("/settings/Apollo");
+    renderSettingsWithExit("/settings/projects/Apollo");
     fireEvent.click(await screen.findByRole("button", { name: "Add Variant" }));
     fireEvent.change(screen.getByLabelText("New variant name"), { target: { value: "Next" } });
     fireEvent.keyDown(screen.getByLabelText("New variant name"), { key: "Enter" });
@@ -1052,14 +1057,14 @@ describe("Settings scoped project and variant views", () => {
     const pending = deferred<typeof variant>();
     variantsCreate.mockReturnValueOnce(pending.promise);
     variantsList.mockResolvedValueOnce([variant]).mockResolvedValue([variant, { id: "variant-2", name: "Next", project_id: project.id }]);
-    renderSettings("/settings/Apollo");
+    renderSettings("/settings/projects/Apollo");
     fireEvent.click(await screen.findByRole("button", { name: "Add variant…" }));
     fireEvent.change(screen.getByLabelText("New variant name"), { target: { value: "Next" } });
     fireEvent.keyDown(screen.getByLabelText("New variant name"), { key: "Enter" });
     fireEvent.click(screen.getByRole("button", { name: "Release" }));
     await act(async () => pending.resolve({ id: "variant-2", name: "Next", project_id: project.id }));
     expect(await screen.findByRole("button", { name: "Next" })).toBeInTheDocument();
-    expect(screen.getByTestId("location")).toHaveTextContent("/settings/Apollo/Release");
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo/Release");
     expect(screen.queryByText('Variant "Next" created.')).not.toBeInTheDocument();
   });
 
@@ -1067,13 +1072,13 @@ describe("Settings scoped project and variant views", () => {
     const initialList = deferred<typeof variant[]>();
     const next = { id: "variant-2", name: "Next", project_id: project.id };
     variantsList.mockReturnValueOnce(initialList.promise).mockResolvedValue([variant, next]);
-    renderSettings("/settings/Apollo");
+    renderSettings("/settings/projects/Apollo");
     fireEvent.click(await screen.findByRole("button", { name: "Add variant…" }));
     fireEvent.change(screen.getByLabelText("New variant name"), { target: { value: "Next" } });
     fireEvent.keyDown(screen.getByLabelText("New variant name"), { key: "Enter" });
     expect(await screen.findByText('Variant "Next" created.')).toBeInTheDocument();
     await act(async () => initialList.resolve([variant]));
-    expect(screen.getByTestId("location")).toHaveTextContent("/settings/Apollo/Next");
+    expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo/Next");
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Import SBOM" })).toBeInTheDocument();
   });
@@ -1109,10 +1114,10 @@ describe("Settings scoped project and variant views", () => {
   });
 
   test("consuming a flash keeps the search and hash", async () => {
-    renderFull("/settings/Apollo", "?q=1", "#x", { settingsFlash: "Saved." });
+    renderFull("/settings/projects/Apollo", "?q=1", "#x", { settingsFlash: "Saved." });
     expect(await screen.findByText("Saved.")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId("state")).toHaveTextContent("null"));
-    expect(screen.getByTestId("full-location")).toHaveTextContent("/settings/Apollo?q=1#x");
+    expect(screen.getByTestId("full-location")).toHaveTextContent("/settings/projects/Apollo?q=1#x");
   });
 
   test("shows the 404 page for a variant that belongs to another project", async () => {
@@ -1121,7 +1126,35 @@ describe("Settings scoped project and variant views", () => {
     variantsList.mockImplementation(async (projectId) => (
       projectId === zeus.id ? [{ id: "variant-3", name: "Beta", project_id: zeus.id }] : [variant]
     ));
-    renderSettings("/settings/Apollo/Beta");
+    renderSettings("/settings/projects/Apollo/Beta");
+    expect(await screen.findByText("Page not found")).toBeInTheDocument();
+  });
+
+  test.each(["transfer", "custom-export"])("opens a project named %s as a project, not a section", async (name) => {
+    const reserved = { id: "project-9", name };
+    projectsList.mockResolvedValue([project, reserved]);
+    variantsList.mockResolvedValue([]);
+    renderSettings(`/settings/projects/${name}`);
+    expect(await screen.findByRole("heading", { name: "Rename Project" })).toBeInTheDocument();
+    expect(await screen.findByDisplayValue(name)).toBeInTheDocument();
+  });
+
+  test("a renamed variant's old name does not resolve to a same-named variant in another project", async () => {
+    const zeus = { id: "project-2", name: "Zeus" };
+    const zeusNew = { id: "variant-3", name: "Release Renamed", project_id: zeus.id };
+    projectsList.mockResolvedValue([project, zeus]);
+    variantsList.mockImplementation(async (projectId) => (projectId === zeus.id ? [zeusNew] : [variant]));
+    render(
+      <MemoryRouter initialEntries={["/settings/projects/Apollo/Release"]}>
+        <Routes>
+          <Route path="/settings/*" element={<><Settings /><LocationProbe /><NavButton to="/settings/projects/Zeus/Release" /></>} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Release Renamed" } });
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo/Release%20Renamed"));
+    fireEvent.click(screen.getByRole("button", { name: "go" }));
     expect(await screen.findByText("Page not found")).toBeInTheDocument();
   });
 });

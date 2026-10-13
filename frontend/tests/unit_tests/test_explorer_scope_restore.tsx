@@ -385,7 +385,7 @@ describe('Explorer saved-scope validation', () => {
         expect(screen.getByText('Add a project variant')).toBeInTheDocument();
         fireEvent.click(screen.getByRole('button', { name: 'Go to settings' }));
 
-        expect(screen.getByTestId('settings-path')).toHaveTextContent(/^\/settings\/Project%201$/);
+        expect(screen.getByTestId('settings-path')).toHaveTextContent(/^\/settings\/projects\/Project%201$/);
         expect(screen.getByTestId('settings-state')).not.toHaveTextContent('openNewProject');
     });
 

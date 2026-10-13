@@ -101,20 +101,30 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
   const [projectsLoadFailed, setProjectsLoadFailed] = useState(false);
   const [projectVariants, setProjectVariants] = useState<Record<string, Variant[]>>({});
   // Routes carry names (unique per project / per variant within a project); resolve them to IDs here.
-  // A rename changes the cached name and the URL in separate renders; aliases keep the selection resolvable meanwhile.
-  const renameAliasesRef = useRef(new Map<string, string>());
-  const findByName = <T extends { name: string }>(items: T[] | undefined, name: string): T | undefined => {
+  // A rename updates the cached name before the URL follows. This record keeps the renamed entity (by ID)
+  // selected under its old URL name until the URL catches up; it never matches any other entity.
+  const pendingRenameRef = useRef<{ kind: "project" | "variant"; id: string; from: string } | null>(null);
+  const findByName = <T extends { id: string; name: string }>(
+    items: T[] | undefined, name: string, kind: "project" | "variant",
+  ): T | undefined => {
     const direct = items?.find((item) => item.name === name);
     if (direct) return direct;
-    const alias = renameAliasesRef.current.get(name);
-    return alias === undefined ? undefined : items?.find((item) => item.name === alias);
+    const pending = pendingRenameRef.current;
+    return pending?.kind === kind && pending.from === name ? items?.find((item) => item.id === pending.id) : undefined;
   };
-  const contextProject = findByName(projects, selectedProjectName);
+  const contextProject = findByName(projects, selectedProjectName, "project");
   const selectedProjectId = contextProject?.id ?? "";
   const contextVariants: Variant[] | undefined = projectVariants[selectedProjectId];
-  const contextVariant = findByName(contextVariants, selectedVariantName);
+  const contextVariant = findByName(contextVariants, selectedVariantName, "variant");
   const selectedVariantId = contextVariant?.id ?? "";
   routeIdsRef.current = { projectId: selectedProjectId, variantId: selectedVariantId };
+
+  useEffect(() => {
+    const pending = pendingRenameRef.current;
+    if (!pending) return;
+    const current = pending.kind === "project" ? selectedProjectName : selectedVariantName;
+    if (current !== pending.from) pendingRenameRef.current = null;
+  }, [selectedProjectName, selectedVariantName]);
 
   useEffect(() => {
     onAgentContextChange?.({ section: route.kind, selectedProjectId: selectedProjectId || projectId });
@@ -484,8 +494,9 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
     setRenameProjectMsg(null);
     try {
       const updated = await Projects.rename(targetId, renameProjectName.trim());
-      renameAliasesRef.current.set(selectedProjectName, updated.name);
-      renameAliasesRef.current.set(updated.name, selectedProjectName);
+      if (updated.name !== selectedProjectName) {
+        pendingRenameRef.current = { kind: "project", id: targetId, from: selectedProjectName };
+      }
       setProjects((current) => current.map((p) => (p.id === targetId ? { ...p, name: updated.name } : p)));
       loadProjects();
       onDataChanged?.("Renaming project...");
@@ -575,8 +586,9 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
     setRenameVariantMsg(null);
     try {
       const updated = await Variants.rename(targetId, renameVariantName.trim());
-      renameAliasesRef.current.set(selectedVariantName, updated.name);
-      renameAliasesRef.current.set(updated.name, selectedVariantName);
+      if (updated.name !== selectedVariantName) {
+        pendingRenameRef.current = { kind: "variant", id: targetId, from: selectedVariantName };
+      }
       setProjectVariants((prev) => ({
         ...prev,
         [targetProjectId]: (prev[targetProjectId] ?? []).map((v) => (v.id === targetId ? { ...v, name: updated.name } : v)),
