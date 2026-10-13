@@ -32,6 +32,7 @@ import ScansHandler from "../handlers/scans";
 import type { EmptyScanPreview, OrphanedVulnerabilityPreview, OutdatedDataPreview } from "../handlers/scans";
 import ConfirmationModal from "../components/ConfirmationModal";
 import InlineAddInput from "../components/InlineAddInput";
+import { entityNameError } from "../helpers/entityName";
 import MessageBanner from "../components/MessageBanner";
 import ModalShell from "../components/ModalShell";
 import Transfer from "./Transfer";
@@ -497,6 +498,11 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
   const handleRenameProject = async () => {
     const targetId = selectedProjectId;
     if (!targetId || !renameProjectName.trim()) return;
+    const nameError = entityNameError(renameProjectName.trim(), "Project");
+    if (nameError) {
+      setRenameProjectMsg({ text: nameError, type: "error" });
+      return;
+    }
     setRenameProjectBusy(true);
     setRenameProjectMsg(null);
     try {
@@ -526,6 +532,8 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
   // Only Projects.create failures reject: a failed list reload must not make
   // the user retry (and hit a duplicate name) for a project that now exists.
   const createProject = async (name: string) => {
+    const nameError = entityNameError(name, "Project");
+    if (nameError) throw new Error(nameError);
     const submitKey = locationKeyRef.current;
     const created = await Projects.create(name);
     const seq = ++projectListSeqRef.current;
@@ -593,6 +601,11 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
     const targetProjectId = selectedProjectId;
     const targetId = selectedVariantId;
     if (!targetId || !renameVariantName.trim()) return;
+    const nameError = entityNameError(renameVariantName.trim(), "Variant");
+    if (nameError) {
+      setRenameVariantMsg({ text: nameError, type: "error" });
+      return;
+    }
     const isStillSelected = () => routeIdsRef.current.variantId === targetId;
     setRenameVariantBusy(true);
     setRenameVariantMsg(null);
@@ -622,6 +635,8 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
 
   // Only Variants.create failures reject; see createProject.
   const createVariant = async (projectId: string, name: string) => {
+    const nameError = entityNameError(name, "Variant");
+    if (nameError) throw new Error(nameError);
     const submitKey = locationKeyRef.current;
     const created = await Variants.create(projectId, name);
     const seq = nextRequest(variantRequestSeqRef.current, projectId);

@@ -187,6 +187,34 @@ class TestCreateProject:
         resp = client.post("/api/projects", json={"name": "   "})
         assert resp.status_code == 400
 
+    @pytest.mark.parametrize("name", [
+        "has space", "a/b", "a.b", "a+b", "(x)", "-lead", "_lead", "@lead", "..", "é", "x" * 65,
+    ])
+    def test_create_project_rejects_disallowed_name(self, client, name):
+        resp = client.post("/api/projects", json={"name": name})
+        assert resp.status_code == 400
+
+    @pytest.mark.parametrize("name", ["Apollo", "a_b-c@d", "9lives", "x" * 64])
+    def test_create_project_accepts_allowed_name(self, client, name):
+        resp = client.post("/api/projects", json={"name": name})
+        assert resp.status_code == 201
+
+    def test_rename_project_rejects_disallowed_name(self, client):
+        pid = _get_project_id(client)
+        resp = client.patch(f"/api/projects/{pid}/rename", json={"name": "bad name"})
+        assert resp.status_code == 400
+
+    def test_create_variant_rejects_disallowed_name(self, client):
+        pid = _get_project_id(client)
+        resp = client.post(f"/api/projects/{pid}/variants", json={"name": "bad/name"})
+        assert resp.status_code == 400
+
+    def test_rename_variant_rejects_disallowed_name(self, client):
+        pid = _get_project_id(client)
+        vid = _get_variant_id(client, pid)
+        resp = client.patch(f"/api/variants/{vid}/rename", json={"name": ".."})
+        assert resp.status_code == 400
+
     def test_create_project_duplicate_name(self, client):
         client.post("/api/projects", json={"name": "Dup"})
         resp = client.post("/api/projects", json={"name": "Dup"})

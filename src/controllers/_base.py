@@ -1,6 +1,7 @@
 # Copyright (C) 2026 Savoir-faire Linux, Inc.
 # SPDX-License-Identifier: GPL-3.0-only
 
+import re
 import typing
 import uuid
 from typing import Any, Callable, Iterable, Protocol
@@ -54,6 +55,30 @@ def validate_non_empty(value: str, field_name: str) -> str:
     value = value.strip()
     if not value:
         raise ValueError(f"{field_name} must not be empty.")
+    return value
+
+
+NAME_MAX_LENGTH = 64
+_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_@-]*")
+
+
+def validate_entity_name(value: str, field_name: str) -> str:
+    """Strip *value* and validate it as a new project or variant name.
+
+    Names are 1-64 ASCII characters: letters and digits plus ``_``, ``-`` and ``@``,
+    starting with a letter or digit, so they stay safe in URLs, shells and filenames.
+    Only apply this to new or renamed entities; existing names are never re-validated.
+
+    :raises ValueError: if the name is blank, too long or contains disallowed characters.
+    """
+    value = validate_non_empty(value, field_name)
+    if len(value) > NAME_MAX_LENGTH:
+        raise ValueError(f"{field_name} must be at most {NAME_MAX_LENGTH} characters long.")
+    if not _NAME_PATTERN.fullmatch(value):
+        raise ValueError(
+            f"{field_name} may only contain letters, digits, '_', '-' and '@', "
+            "and must start with a letter or digit."
+        )
     return value
 
 

@@ -23,6 +23,7 @@ from ..controllers import (
     ScanController,
     SBOMDocumentController,
 )
+from ..controllers._base import validate_entity_name
 from ..controllers.job_context import JobContext
 from ..controllers.operation_queue import queue as operation_queue
 from ..controllers.operation_registry import KIND_UPLOAD, LANE_UPLOAD, registry
@@ -286,9 +287,10 @@ def init_app(app: Flask) -> None:
         data = request.get_json(silent=True)
         if not data or not isinstance(data.get("name"), str):
             return None, (jsonify({"error": "Missing or invalid 'name' field."}), 400)
-        name = data["name"].strip()
-        if not name:
-            return None, (jsonify({"error": f"{entity_label} name must not be empty."}), 400)
+        try:
+            name = validate_entity_name(data["name"], f"{entity_label} name")
+        except ValueError as e:
+            return None, (jsonify({"error": str(e)}), 400)
         return name, None
 
     def _delete_entity(

@@ -183,10 +183,10 @@ describe("Settings scoped project and variant views", () => {
     nvdApiKeySet.mockResolvedValue({ ok: true, has_key: true, masked_key: "abcd...wxyz" });
     nvdApiKeyRemove.mockResolvedValue({ ok: true, has_key: false, masked_key: "" });
     projectsCreate.mockResolvedValue({ id: "project-2", name: "Zeus" });
-    projectsRename.mockResolvedValue({ ...project, name: "Apollo Renamed" });
+    projectsRename.mockResolvedValue({ ...project, name: "Apollo-Renamed" });
     projectsDelete.mockResolvedValue();
     variantsCreate.mockResolvedValue({ id: "variant-2", name: "Next", project_id: project.id });
-    variantsRename.mockResolvedValue({ ...variant, name: "Release Renamed" });
+    variantsRename.mockResolvedValue({ ...variant, name: "Release-Renamed" });
     variantsDelete.mockResolvedValue();
     variantsUploadSBOM.mockRejectedValue(new Error("Upload rejected"));
     getEmptyScansPreview.mockResolvedValue({ ok: true, scans: [{ id: "scan-1", description: "Empty", timestamp: "", project: "Apollo", variant: "Release" }] });
@@ -306,7 +306,7 @@ describe("Settings scoped project and variant views", () => {
   test("a failed project list reload after a rename keeps the page", async () => {
     projectsList.mockResolvedValueOnce([project]).mockRejectedValue(new Error("boom"));
     renderSettings("/settings/projects/Apollo");
-    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Apollo Renamed" } });
+    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Apollo-Renamed" } });
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
     expect(await screen.findByText("Project renamed.")).toBeInTheDocument();
     await waitFor(() => expect(projectsList).toHaveBeenCalledTimes(2));
@@ -330,19 +330,19 @@ describe("Settings scoped project and variant views", () => {
 
   test("renaming a project moves the URL to the new name", async () => {
     renderSettings("/settings/projects/Apollo");
-    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Apollo Renamed" } });
-    projectsList.mockResolvedValue([{ ...project, name: "Apollo Renamed" }]);
+    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Apollo-Renamed" } });
+    projectsList.mockResolvedValue([{ ...project, name: "Apollo-Renamed" }]);
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo%20Renamed"));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo-Renamed"));
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
   });
 
   test("renaming a variant moves the URL to the new name", async () => {
     renderSettings("/settings/projects/Apollo/Release");
-    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Release Renamed" } });
-    variantsList.mockResolvedValue([{ ...variant, name: "Release Renamed" }]);
+    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Release-Renamed" } });
+    variantsList.mockResolvedValue([{ ...variant, name: "Release-Renamed" }]);
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo/Release%20Renamed"));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo/Release-Renamed"));
     expect(screen.queryByText("Page not found")).not.toBeInTheDocument();
   });
 
@@ -549,8 +549,8 @@ describe("Settings scoped project and variant views", () => {
     expect(await screen.findByText('Project "Zeus" created.')).toBeInTheDocument();
     expect(projectsCreate).toHaveBeenCalledWith("Zeus");
 
-    fireEvent.change(screen.getByLabelText("New name"), { target: { value: "Apollo Renamed" } });
-    const renamedProject = { id: "project-2", name: "Apollo Renamed" };
+    fireEvent.change(screen.getByLabelText("New name"), { target: { value: "Apollo-Renamed" } });
+    const renamedProject = { id: "project-2", name: "Apollo-Renamed" };
     projectsRename.mockResolvedValue(renamedProject);
     projectsList.mockResolvedValue([renamedProject]);
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
@@ -565,15 +565,15 @@ describe("Settings scoped project and variant views", () => {
 
     fireEvent.click(await screen.findByRole("button", { name: "Expand Apollo" }));
     fireEvent.click(screen.getByRole("button", { name: "Release" }));
-    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Release Renamed" } });
-    const renamedVariant = { ...variant, name: "Release Renamed" };
+    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Release-Renamed" } });
+    const renamedVariant = { ...variant, name: "Release-Renamed" };
     variantsList.mockResolvedValue([renamedVariant]);
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
     expect(await screen.findByText("Variant renamed.")).toBeInTheDocument();
-    expect(variantsRename).toHaveBeenCalledWith(variant.id, "Release Renamed");
+    expect(variantsRename).toHaveBeenCalledWith(variant.id, "Release-Renamed");
 
     fireEvent.click(screen.getByRole("button", { name: /^Apollo/ }));
-    fireEvent.click(await screen.findByRole("button", { name: "Delete Release Renamed" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Delete Release-Renamed" }));
     fireEvent.click(await screen.findByRole("button", { name: "Yes, delete" }));
     await waitFor(() => expect(variantsDelete).toHaveBeenCalledWith(variant.id));
     expect(screen.getByRole("heading", { name: "Rename Project" })).toBeInTheDocument();
@@ -936,7 +936,7 @@ describe("Settings scoped project and variant views", () => {
     // The tree stays expanded after visiting the project page.
     fireEvent.click(await screen.findByRole("button", { name: "Release" }));
     const newName = await screen.findByLabelText("New name");
-    fireEvent.change(newName, { target: { value: "Broken rename" } });
+    fireEvent.change(newName, { target: { value: "Broken-rename" } });
     fireEvent.keyDown(newName, { key: "Enter" });
     expect(await screen.findByText("Variant rename failed")).toBeInTheDocument();
 
@@ -1104,6 +1104,23 @@ describe("Settings scoped project and variant views", () => {
     expect(await screen.findByRole("heading", { name: "Rename Project" })).toBeInTheDocument();
   });
 
+  test("rejects a disallowed project name without calling the API", async () => {
+    renderSettings();
+    fireEvent.click(await screen.findByRole("button", { name: "New Project" }));
+    fireEvent.change(screen.getByLabelText("New project name"), { target: { value: "bad name" } });
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+    expect(await screen.findByText(/may only contain letters, digits/)).toBeInTheDocument();
+    expect(projectsCreate).not.toHaveBeenCalled();
+  });
+
+  test("rejects a disallowed project rename without calling the API", async () => {
+    renderSettings("/settings/projects/Apollo");
+    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "bad name" } });
+    fireEvent.click(screen.getByRole("button", { name: "Rename" }));
+    expect(await screen.findByText(/may only contain letters, digits/)).toBeInTheDocument();
+    expect(projectsRename).not.toHaveBeenCalled();
+  });
+
   test("a project created after a failed initial load opens its page", async () => {
     projectsList.mockRejectedValueOnce(new Error("boom")).mockResolvedValue([project, { id: "project-2", name: "Zeus" }]);
     renderSettings();
@@ -1162,7 +1179,7 @@ describe("Settings scoped project and variant views", () => {
 
   test("a renamed variant's old name does not resolve to a same-named variant in another project", async () => {
     const zeus = { id: "project-2", name: "Zeus" };
-    const zeusNew = { id: "variant-3", name: "Release Renamed", project_id: zeus.id };
+    const zeusNew = { id: "variant-3", name: "Release-Renamed", project_id: zeus.id };
     projectsList.mockResolvedValue([project, zeus]);
     variantsList.mockImplementation(async (projectId) => (projectId === zeus.id ? [zeusNew] : [variant]));
     render(
@@ -1172,9 +1189,9 @@ describe("Settings scoped project and variant views", () => {
         </Routes>
       </MemoryRouter>,
     );
-    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Release Renamed" } });
+    fireEvent.change(await screen.findByLabelText("New name"), { target: { value: "Release-Renamed" } });
     fireEvent.click(screen.getByRole("button", { name: "Rename" }));
-    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo/Release%20Renamed"));
+    await waitFor(() => expect(screen.getByTestId("location")).toHaveTextContent("/settings/projects/Apollo/Release-Renamed"));
     fireEvent.click(screen.getByRole("button", { name: "go" }));
     expect(await screen.findByText("Page not found")).toBeInTheDocument();
   });

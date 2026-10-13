@@ -5,7 +5,7 @@ import uuid
 from typing import Optional
 
 from ..models.variant import Variant
-from ._base import ensure_uuid, resolve_entity, validate_non_empty
+from ._base import ensure_uuid, resolve_entity, validate_entity_name, validate_non_empty
 
 
 class VariantController:
@@ -62,21 +62,25 @@ class VariantController:
         """
         Validate *name* and create a new variant under *project_id*.
 
-        :raises ValueError: if *name* is empty or blank.
+        :raises ValueError: if *name* is empty, blank or not an allowed name.
         """
-        name = validate_non_empty(name, "Variant name")
+        name = validate_entity_name(name, "Variant name")
         return Variant.create(name, ensure_uuid(project_id))
 
     @staticmethod
     def get_or_create(name: str, project_id: uuid.UUID | str) -> Variant:
         """
         Return an existing variant matching *name* under *project_id*,
-        or create and persist a new one.
+        or create and persist a new one.  Only a new name is checked against the
+        naming rules, so pre-existing variants stay reachable.
 
-        :raises ValueError: if *name* is empty or blank.
+        :raises ValueError: if *name* is empty or blank, or is new and not an allowed name.
         """
         name = validate_non_empty(name, "Variant name")
-        return Variant.get_or_create(name, ensure_uuid(project_id))
+        project_uuid = ensure_uuid(project_id)
+        if Variant.get_by_name_and_project(name, project_uuid) is None:
+            name = validate_entity_name(name, "Variant name")
+        return Variant.get_or_create(name, project_uuid)
 
     @staticmethod
     def update(variant: Variant | uuid.UUID | str, name: str) -> Variant:
@@ -84,9 +88,9 @@ class VariantController:
         Update *variant*'s name.  *variant* may be a :class:`Variant` instance,
         a UUID object, or a UUID string.
 
-        :raises ValueError: if *name* is empty or blank, or variant is not found.
+        :raises ValueError: if *name* is empty, blank or not an allowed name, or variant is not found.
         """
-        name = validate_non_empty(name, "Variant name")
+        name = validate_entity_name(name, "Variant name")
         resolved = resolve_entity(variant, VariantController.get, "Variant")
         return resolved.update(name)
 

@@ -5,7 +5,7 @@ import uuid
 from typing import Optional
 
 from ..models.project import Project
-from ._base import ensure_uuid, resolve_entity, validate_non_empty
+from ._base import ensure_uuid, resolve_entity, validate_entity_name, validate_non_empty
 
 
 class ProjectController:
@@ -67,20 +67,23 @@ class ProjectController:
         """
         Validate *name* and create a new project.
 
-        :raises ValueError: if *name* is empty or blank.
+        :raises ValueError: if *name* is empty, blank or not an allowed name.
         """
-        name = validate_non_empty(name, "Project name")
+        name = validate_entity_name(name, "Project name")
         return Project.create(name)
 
     @staticmethod
     def get_or_create(name: str) -> Project:
         """
         Return an existing project whose name matches *name* (case-sensitive),
-        or create and persist a new one.
+        or create and persist a new one.  Only a new name is checked against the
+        naming rules, so pre-existing projects stay reachable.
 
-        :raises ValueError: if *name* is empty or blank.
+        :raises ValueError: if *name* is empty or blank, or is new and not an allowed name.
         """
         name = validate_non_empty(name, "Project name")
+        if Project.get_by_name(name) is None:
+            name = validate_entity_name(name, "Project name")
         return Project.get_or_create(name)
 
     @staticmethod
@@ -89,9 +92,9 @@ class ProjectController:
         Update *project*'s name.  *project* may be a :class:`Project` instance,
         a UUID object, or a UUID string.
 
-        :raises ValueError: if *name* is empty or blank, or project is not found.
+        :raises ValueError: if *name* is empty, blank or not an allowed name, or project is not found.
         """
-        name = validate_non_empty(name, "Project name")
+        name = validate_entity_name(name, "Project name")
         resolved = resolve_entity(project, ProjectController.get, "Project")
         return resolved.update(name)
 
