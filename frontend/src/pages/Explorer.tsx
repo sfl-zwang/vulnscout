@@ -107,7 +107,7 @@ function Explorer() {
     const [modalVariantScope, setModalVariantScope] = useState<{ vulnId: string; projectId?: string; ids: string[] } | null>(null);
     const [projectVariantScope, setProjectVariantScope] = useState<{ projectId: string; ids: string[] } | null>(null);
     const [setupRequirement, setSetupRequirement] = useState<
-        { kind: 'project' } | { kind: 'variant'; projectId: string } | { kind: 'error' } | null
+        { kind: 'project' } | { kind: 'variant'; projectName: string } | { kind: 'error' } | null
     >(null);
     const hadActiveScans = useRef(false);
     const observedOperationStatuses = useRef(new Map<string, string>());
@@ -135,7 +135,7 @@ function Explorer() {
                 if (projects.length === 0) {
                     setSetupRequirement({ kind: 'project' });
                 } else if (variants.length === 0) {
-                    setSetupRequirement({ kind: 'variant', projectId: projects[0].id });
+                    setSetupRequirement({ kind: 'variant', projectName: projects[0].name });
                 } else {
                     setSetupRequirement(null);
                 }
@@ -595,7 +595,7 @@ function Explorer() {
                                 return;
                             }
                             if (setupRequirement?.kind === 'variant') {
-                                navigate(settingsProjectPath(setupRequirement.projectId));
+                                navigate(settingsProjectPath(setupRequirement.projectName));
                             } else {
                                 navigate(ROUTES.settings, { state: { openNewProject: true } satisfies SettingsNavState });
                             }

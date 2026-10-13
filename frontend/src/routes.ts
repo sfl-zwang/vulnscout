@@ -44,20 +44,20 @@ export const SETTINGS_PATHS = {
     customExport: `${ROUTES.settings}/custom-export`,
 } as const;
 
-export function settingsProjectPath(projectId: string): string {
-    return `${ROUTES.settings}/${encodeURIComponent(projectId)}`;
+export function settingsProjectPath(projectName: string): string {
+    return `${ROUTES.settings}/${encodeURIComponent(projectName)}`;
 }
 
-export function settingsVariantPath(projectId: string, variantId: string): string {
-    return `${settingsProjectPath(projectId)}/${encodeURIComponent(variantId)}`;
+export function settingsVariantPath(projectName: string, variantName: string): string {
+    return `${settingsProjectPath(projectName)}/${encodeURIComponent(variantName)}`;
 }
 
 export type SettingsRoute =
     | { kind: 'general' }
     | { kind: 'transfer' }
     | { kind: 'custom-export' }
-    | { kind: 'project'; projectId: string }
-    | { kind: 'variant'; projectId: string; variantId: string }
+    | { kind: 'project'; projectName: string }
+    | { kind: 'variant'; projectName: string; variantName: string }
     | { kind: 'unknown' };
 
 /** Map a pathname under `/settings` to the settings view it renders. */
@@ -77,10 +77,10 @@ export function parseSettingsPath(pathname: string): SettingsRoute {
     if (segments.length === 1) {
         if (segments[0] === 'transfer') return { kind: 'transfer' };
         if (segments[0] === 'custom-export') return { kind: 'custom-export' };
-        return { kind: 'project', projectId: segments[0] };
+        return { kind: 'project', projectName: segments[0] };
     }
     if (segments.length === 2) {
-        return { kind: 'variant', projectId: segments[0], variantId: segments[1] };
+        return { kind: 'variant', projectName: segments[0], variantName: segments[1] };
     }
     return { kind: 'unknown' };
 }

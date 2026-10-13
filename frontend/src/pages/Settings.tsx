@@ -73,20 +73,15 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
   const location = useLocation();
   const navigate = useNavigate();
   const route = parseSettingsPath(location.pathname);
-  const selectedProjectId = route.kind === "project" || route.kind === "variant" ? route.projectId : "";
-  const selectedVariantId = route.kind === "variant" ? route.variantId : "";
+  const selectedProjectName = route.kind === "project" || route.kind === "variant" ? route.projectName : "";
+  const selectedVariantName = route.kind === "variant" ? route.variantName : "";
   const navState = location.state as SettingsNavState | null;
   // Lets async continuations detect that the user moved to another project/variant meanwhile.
-  const routeIdsRef = useRef({ projectId: selectedProjectId, variantId: selectedVariantId });
-  routeIdsRef.current = { projectId: selectedProjectId, variantId: selectedVariantId };
+  const routeIdsRef = useRef({ projectId: "", variantId: "" });
   const locationKeyRef = useRef(location.key);
   locationKeyRef.current = location.key;
 
-  useEffect(() => {
-    onAgentContextChange?.({ section: route.kind, selectedProjectId: selectedProjectId || projectId });
-  }, [route.kind, selectedProjectId, projectId, onAgentContextChange]);
-
-  // ---- Unmount guard for async operations ----
+    // ---- Unmount guard for async operations ----
   const unmountedRef = useRef(false);
   const uploadWaitRef = useRef<AbortController | null>(null);
   const loadingMessageRef = useRef(onLoadingMessage);
@@ -105,6 +100,25 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [projectsLoadFailed, setProjectsLoadFailed] = useState(false);
   const [projectVariants, setProjectVariants] = useState<Record<string, Variant[]>>({});
+  // Routes carry names (unique per project / per variant within a project); resolve them to IDs here.
+  // A rename changes the cached name and the URL in separate renders; aliases keep the selection resolvable meanwhile.
+  const renameAliasesRef = useRef(new Map<string, string>());
+  const findByName = <T extends { name: string }>(items: T[] | undefined, name: string): T | undefined => {
+    const direct = items?.find((item) => item.name === name);
+    if (direct) return direct;
+    const alias = renameAliasesRef.current.get(name);
+    return alias === undefined ? undefined : items?.find((item) => item.name === alias);
+  };
+  const contextProject = findByName(projects, selectedProjectName);
+  const selectedProjectId = contextProject?.id ?? "";
+  const contextVariants: Variant[] | undefined = projectVariants[selectedProjectId];
+  const contextVariant = findByName(contextVariants, selectedVariantName);
+  const selectedVariantId = contextVariant?.id ?? "";
+  routeIdsRef.current = { projectId: selectedProjectId, variantId: selectedVariantId };
+
+  useEffect(() => {
+    onAgentContextChange?.({ section: route.kind, selectedProjectId: selectedProjectId || projectId });
+  }, [route.kind, selectedProjectId, projectId, onAgentContextChange]);
   const [variantLoadFailedIds, setVariantLoadFailedIds] = useState<Set<string>>(new Set());
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(new Set());
   const [openAddKey, setOpenAddKey] = useState<AddKey>(null);
@@ -470,11 +484,20 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
     setRenameProjectMsg(null);
     try {
       const updated = await Projects.rename(targetId, renameProjectName.trim());
+      renameAliasesRef.current.set(selectedProjectName, updated.name);
+      renameAliasesRef.current.set(updated.name, selectedProjectName);
+      setProjects((current) => current.map((p) => (p.id === targetId ? { ...p, name: updated.name } : p)));
       loadProjects();
       onDataChanged?.("Renaming project...");
       if (routeIdsRef.current.projectId !== targetId) return;
       setRenameProjectName(updated.name);
       setRenameProjectMsg({ text: "Project renamed.", type: "success" });
+      if (updated.name !== selectedProjectName) {
+        navigate(
+          selectedVariantName ? settingsVariantPath(updated.name, selectedVariantName) : settingsProjectPath(updated.name),
+          { replace: true },
+        );
+      }
     } catch (e: any) {
       if (routeIdsRef.current.projectId === targetId) setRenameProjectMsg({ text: e.message, type: "error" });
     } finally {
@@ -497,7 +520,7 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
     }
     // Don't pull the user back if they left Settings or moved elsewhere meanwhile.
     if (!unmountedRef.current && locationKeyRef.current === submitKey) {
-      navigate(settingsProjectPath(created.id), {
+      navigate(settingsProjectPath(created.name), {
         state: { settingsFlash: `Project "${created.name}" created.` } satisfies SettingsNavState,
       });
     }
@@ -552,11 +575,20 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
     setRenameVariantMsg(null);
     try {
       const updated = await Variants.rename(targetId, renameVariantName.trim());
+      renameAliasesRef.current.set(selectedVariantName, updated.name);
+      renameAliasesRef.current.set(updated.name, selectedVariantName);
+      setProjectVariants((prev) => ({
+        ...prev,
+        [targetProjectId]: (prev[targetProjectId] ?? []).map((v) => (v.id === targetId ? { ...v, name: updated.name } : v)),
+      }));
       reloadProjectVariants(targetProjectId);
       onDataChanged?.("Renaming variant...");
       if (!isStillSelected()) return;
       setRenameVariantName(updated.name);
       setRenameVariantMsg({ text: "Variant renamed.", type: "success" });
+      if (updated.name !== selectedVariantName) {
+        navigate(settingsVariantPath(selectedProjectName, updated.name), { replace: true });
+      }
     } catch (e: any) {
       if (isStillSelected()) setRenameVariantMsg({ text: e.message, type: "error" });
     } finally {
@@ -580,7 +612,8 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
     }
     // Don't pull the user back if they left Settings or moved elsewhere meanwhile.
     if (!unmountedRef.current && locationKeyRef.current === submitKey) {
-      navigate(settingsVariantPath(projectId, created.id), {
+      const parentName = projects.find((p) => p.id === projectId)?.name ?? selectedProjectName;
+      navigate(settingsVariantPath(parentName, created.name), {
         state: { settingsFlash: `Variant "${created.name}" created.` } satisfies SettingsNavState,
       });
     }
@@ -671,15 +704,12 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
   };
 
   // ---- Project / variant in scope, resolved from the URL ----
-  const contextProject = projects.find((p) => p.id === selectedProjectId);
-  const contextVariants: Variant[] | undefined = projectVariants[selectedProjectId];
-  const contextVariant = contextVariants?.find((v) => v.id === selectedVariantId);
   const notFound =
     route.kind === "unknown" ||
-    (projectsLoaded && !!selectedProjectId && !contextProject) ||
+    (projectsLoaded && !!selectedProjectName && !contextProject) ||
     (route.kind === "variant" && !!contextProject && contextVariants !== undefined && !contextVariant);
   const contextLoading =
-    !!selectedProjectId && (!projectsLoaded || (route.kind === "variant" && contextVariants === undefined));
+    !!selectedProjectName && (!projectsLoaded || (route.kind === "variant" && contextVariants === undefined));
   let contextLoadError: string | null = null;
   if (contextLoading) {
     if (!projectsLoaded) {
@@ -756,7 +786,7 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
       crumbs.push({ label: pageTitle });
       pageTag = { label: "Project", className: "bg-cyan-950 text-cyan-300" };
     } else {
-      crumbs.push({ label: contextProject?.name ?? "", to: settingsProjectPath(route.projectId) });
+      crumbs.push({ label: contextProject?.name ?? "", to: settingsProjectPath(route.projectName) });
       pageTitle = contextVariant?.name ?? "";
       crumbs.push({ label: pageTitle });
       pageTag = { label: "Variant", className: "bg-violet-950 text-violet-300" };
@@ -835,7 +865,7 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
                       </button>
                       <button
                         type="button"
-                        onClick={() => navigate(settingsProjectPath(project.id))}
+                        onClick={() => navigate(settingsProjectPath(project.name))}
                         aria-current={isSelected ? "page" : undefined}
                         className="flex min-w-0 flex-1 items-center gap-2 py-2 pr-3 text-left text-sm text-slate-200"
                       >
@@ -853,7 +883,7 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
                           <button
                             type="button"
                             key={variant.id}
-                            onClick={() => navigate(settingsVariantPath(project.id, variant.id))}
+                            onClick={() => navigate(settingsVariantPath(project.name, variant.name))}
                             aria-current={isVariantSelected ? "page" : undefined}
                             className={`mt-1 flex w-full items-center gap-2 rounded-md px-3 py-1.5 text-left text-sm transition-colors ${
                               isVariantSelected
@@ -1305,7 +1335,7 @@ function Settings({ onDataChanged, onLoadingMessage, projectId, onAgentContextCh
                 <div className="flex shrink-0 items-center gap-1">
                   <button
                     type="button"
-                    onClick={() => navigate(settingsVariantPath(contextProject.id, v.id))}
+                    onClick={() => navigate(settingsVariantPath(contextProject.name, v.name))}
                     className="flex h-8 w-8 items-center justify-center rounded text-zinc-400 transition-colors hover:bg-slate-700 hover:text-sky-300"
                     aria-label={`Edit ${v.name}`}
                     title="Edit variant"

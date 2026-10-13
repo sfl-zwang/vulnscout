@@ -43,9 +43,9 @@ describe('settings sub-routes', () => {
         expect(parseSettingsPath('/settings/')).toEqual({ kind: 'general' });
         expect(parseSettingsPath('/settings/transfer')).toEqual({ kind: 'transfer' });
         expect(parseSettingsPath('/settings/custom-export')).toEqual({ kind: 'custom-export' });
-        expect(parseSettingsPath('/settings/p1')).toEqual({ kind: 'project', projectId: 'p1' });
-        expect(parseSettingsPath('/settings/p1/')).toEqual({ kind: 'project', projectId: 'p1' });
-        expect(parseSettingsPath('/settings/p1/v1/')).toEqual({ kind: 'variant', projectId: 'p1', variantId: 'v1' });
+        expect(parseSettingsPath('/settings/p1')).toEqual({ kind: 'project', projectName: 'p1' });
+        expect(parseSettingsPath('/settings/p1/')).toEqual({ kind: 'project', projectName: 'p1' });
+        expect(parseSettingsPath('/settings/p1/v1/')).toEqual({ kind: 'variant', projectName: 'p1', variantName: 'v1' });
         expect(parseSettingsPath('/settings/p1/v1/x')).toEqual({ kind: 'unknown' });
         expect(parseSettingsPath('/settings/%E0%A4%A')).toEqual({ kind: 'unknown' });
         expect(parseSettingsPath('/sbom')).toEqual({ kind: 'unknown' });
@@ -54,6 +54,6 @@ describe('settings sub-routes', () => {
     test('builds project and variant paths that round-trip', () => {
         expect(settingsProjectPath('p 1')).toBe('/settings/p%201');
         expect(settingsVariantPath('p1', 'v1')).toBe('/settings/p1/v1');
-        expect(parseSettingsPath(settingsProjectPath('p 1'))).toEqual({ kind: 'project', projectId: 'p 1' });
+        expect(parseSettingsPath(settingsProjectPath('p 1'))).toEqual({ kind: 'project', projectName: 'p 1' });
     });
 });
