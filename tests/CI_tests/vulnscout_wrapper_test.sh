@@ -34,6 +34,8 @@ printf '{}\n' > "$SBOM"
 export PATH="$TEST_DIR/bin:/usr/bin:/bin"
 export VULNSCOUT_BUILD_DIR="$TEST_DIR/build"
 export VULNSCOUT_TEST_LOG="$TEST_DIR/container.log"
+# This suite exercises the legacy flags on purpose.
+export VULNSCOUT_NO_DEPRECATION_WARNINGS=1
 
 "$ROOT_DIR/vulnscout" --help | grep -q -- '--refresh-vulnerability-data'
 

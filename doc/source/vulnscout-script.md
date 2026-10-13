@@ -4,8 +4,39 @@ The `./vulnscout` script is the main host-side entry point for running VulnScout
 It manages the container lifecycle (Docker or Podman) and forwards commands to the container's entrypoint.
 
 ```
-./vulnscout [options] [command]
+./vulnscout [--project <name>] [--variant <name>] <command> [options]
 ```
+
+## Command Syntax
+
+Commands are grouped by subject. The older `--flag` forms (for example `--add-spdx`) still work as
+aliases, print a deprecation warning on stderr, and will be removed in a future major release.
+Set `VULNSCOUT_NO_DEPRECATION_WARNINGS=1` to silence the warnings.
+
+| Command | Replaces |
+|---|---|
+| `add <spdx\|cdx\|grype\|openvex\|cve-check\|yocto-vex> <path>` | `--add-spdx`, `--add-cdx`, `--add-grype`, `--add-openvex`, `--add-cve-check`, `--add-yocto-vex` |
+| `asset add <path>` | `--add-asset` |
+| `scan [grype,nvd,osv,sbom-cve-check\|all]` (default `all`) | `--perform-scans`, `--perform-*-scan` |
+| `export <spdx\|cdx\|openvex\|assessments-openvex\|data\|context>` | `--export-spdx`, `--export-cdx`, `--export-openvex`, `--export-custom-openvex-assessments`, `--export-custom-vulnscout-data`, `--export-context` |
+| `import <assessments-openvex\|data\|context> <path>` | `--import-custom-openvex-assessments`, `--import-custom-vulnscout-data`, `--import-context` |
+| `delete scan <id>`, `delete outdated`, `delete empty-scans`, `delete orphaned-vulns` | `--delete-scan`, `--delete-outdated`, `--delete-empty-scans`, `--delete-orphaned-vulns` |
+| `list <projects\|scans>` | `--list-projects`, `--list-scans` |
+| `config set <key> <value>`, `config get <key>`, `config list`, `config unset <key>` | `--config <key> <value>`, `--config-list`, `--config-clear` |
+| `container <start\|stop\|restart\|update>` | `--start`, `--stop`, `--restart`, `--update` |
+| `refresh` | `--refresh-vulnerability-data` |
+| `check <expression>` | `--match-condition` |
+
+Option replacements:
+
+| Option | Replaces |
+|---|---|
+| `--timestamps original\|current` | `--use-original-timestamps`, `--use-current-timestamps` |
+| `--format json\|text` | `--json` |
+
+`--project` and `--variant` have no effect on `config`, `container`, `asset add`, `delete` and `list`;
+a warning is printed if they are given. Flag names mentioned in the prose below are the legacy
+spellings of the commands in the table above.
 
 ---
 
@@ -15,13 +46,13 @@ The `vulnscout` script manages the container automatically (using Docker or Podm
 
 ```bash
 # Start the container (done automatically by most commands)
-./vulnscout start
+./vulnscout container start
 
 # Stop and remove the container
-./vulnscout stop
+./vulnscout container stop
 
 # Restart the container (useful after changing config)
-./vulnscout restart
+./vulnscout container restart
 ```
 
 ---
@@ -31,7 +62,7 @@ The `vulnscout` script manages the container automatically (using Docker or Podm
 To update VulnScout to the latest version, pull the latest container image and restart:
 
 ```bash
-./vulnscout --update
+./vulnscout container update
 ```
 
 Then verify the new version is correctly running:
@@ -48,8 +79,8 @@ By default VulnScout runs in **interactive mode**, starting a web dashboard.
 
 ```bash
 ./vulnscout --serve \
-  --add-spdx $(pwd)/example/spdx3/core-image-minimal-qemux86-64.rootfs.spdx.json \
-  --add-cve-check $(pwd)/example/spdx3/core-image-minimal-qemux86-64.rootfs.json
+  add spdx $(pwd)/example/spdx3/core-image-minimal-qemux86-64.rootfs.spdx.json \
+  add cve-check $(pwd)/example/spdx3/core-image-minimal-qemux86-64.rootfs.json
 ```
 
 After starting the scan, open:
@@ -88,9 +119,9 @@ for deletion. The cleanup applies to every project and variant in the database.
 The same global cleanup is available to automation and CI:
 
 ```bash
-./vulnscout --delete-outdated
-./vulnscout --delete-empty-scans
-./vulnscout --delete-orphaned-vulns
+./vulnscout delete outdated
+./vulnscout delete empty-scans
+./vulnscout delete orphaned-vulns
 ```
 
 The cleanup removes outdated package observations, SBOM links, and custom assessments.
@@ -120,8 +151,8 @@ Example:
 
 ```bash
 ./vulnscout --project demo --variant x86 \
-  --add-spdx $(pwd)/example/spdx3/core-image-minimal-qemux86-64.rootfs.spdx.json \
-  --add-cve-check $(pwd)/example/spdx3/core-image-minimal-qemux86-64.rootfs.json
+  add spdx $(pwd)/example/spdx3/core-image-minimal-qemux86-64.rootfs.spdx.json \
+  add cve-check $(pwd)/example/spdx3/core-image-minimal-qemux86-64.rootfs.json
 ```
 
 ## Input Sources
@@ -135,8 +166,8 @@ imported by that run with current EPSS, NVD, ENISA EUVD, and GitHub Advisory dat
 
 ```bash
 ./vulnscout \
-  --add-spdx $(pwd)/example/spdx3/core-image-minimal-qemux86-64.rootfs.spdx.json \
-  --refresh-vulnerability-data
+  add spdx $(pwd)/example/spdx3/core-image-minimal-qemux86-64.rootfs.spdx.json \
+  refresh
 ```
 
 Inside the container, the equivalent Flask command is:
@@ -150,9 +181,9 @@ The option can also refresh vulnerability data already in the database. Omit
 that project's active vulnerabilities:
 
 ```bash
-./vulnscout --refresh-vulnerability-data
-./vulnscout --project demo --refresh-vulnerability-data
-./vulnscout --project demo --variant x86 --refresh-vulnerability-data
+./vulnscout refresh
+./vulnscout --project demo refresh
+./vulnscout --project demo --variant x86 refresh
 ```
 
 Inside the container, use `flask --app src.bin.webapp refresh-vulnerability-data`
@@ -167,7 +198,7 @@ command exits with an error listing the failed sources.
 ### SPDX SBOM
 
 ```
---add-spdx <path>
+add spdx <path>
 ```
 
 Path to an SPDX 2 or SPDX 3 SBOM file. SPDX 3 JSON-LD files (`.jsonld`), including Zephyr-generated SBOMs, are supported. Also supports SPDX JSON, tag-value (`.spdx`), and archive formats (`.tar`, `.tar.gz`, `.tar.zst`).
@@ -177,10 +208,10 @@ same project and variant:
 
 ```bash
 ./vulnscout --project zephyr_test --variant demo \
-  --add-spdx spdx/app.jsonld \
-  --add-spdx spdx/build.jsonld \
-  --add-spdx spdx/modules-deps.jsonld \
-  --add-spdx spdx/zephyr.jsonld
+  add spdx spdx/app.jsonld \
+  add spdx spdx/build.jsonld \
+  add spdx spdx/modules-deps.jsonld \
+  add spdx spdx/zephyr.jsonld
 ```
 
 Release versions and Git revisions are displayed separately in the SBOM table;
@@ -191,7 +222,7 @@ see [Interactive mode](interactive-mode.md#column-visibility).
 ### CycloneDX SBOM
 
 ```
---add-cdx <path>
+add cdx <path>
 ```
 
 Path to a CycloneDX file.
@@ -201,7 +232,7 @@ Path to a CycloneDX file.
 ### Yocto CVE Check Output
 
 ```
---add-cve-check <path>
+add cve-check <path>
 ```
 
 JSON output from the Yocto `cve-check` task.
@@ -211,7 +242,7 @@ JSON output from the Yocto `cve-check` task.
 ### Yocto VEX Output
 
 ```
---add-yocto-vex <path>
+add yocto-vex <path>
 ```
 
 JSON output from the Yocto `vex.bbclass` task.  Carries richer CPE and
@@ -222,7 +253,7 @@ patch-file information than the plain cve-check output.
 ### OpenVEX
 
 ```
---add-openvex <path>
+add openvex <path>
 ```
 
 Include vulnerability assessments provided as OpenVEX.
@@ -232,7 +263,7 @@ Include vulnerability assessments provided as OpenVEX.
 ### Grype
 
 ```
---add-grype <path>
+add grype <path>
 ```
 
 Import a Grype native JSON file. Files should end with `.grype.json`.
@@ -245,9 +276,9 @@ Multiple inputs can be chained in a single command:
 
 ```bash
 ./vulnscout --project demo --variant x86 \
-  --add-spdx /path/to/sbom.spdx.json \
-  --add-cve-check /path/to/cve-check.json \
-  --add-openvex /path/to/assessments.openvex.json
+  add spdx /path/to/sbom.spdx.json \
+  add cve-check /path/to/cve-check.json \
+  add openvex /path/to/assessments.openvex.json
 ```
 
 ```{tip}
@@ -263,7 +294,7 @@ To ignore parsing errors for malformed SBOMs, set: `IGNORE_PARSING_ERRORS=true`
 VulnScout can run Grype on the current database contents:
 
 ```bash
-./vulnscout --project demo --variant x86 --perform-scans grype
+./vulnscout --project demo --variant x86 scan grype
 ```
 
 `--perform-scans` accepts `grype`, `nvd` (CPE-based), `osv` (PURL-based), and `sbom-cve-check` (local advisory databases). Select several with commas (`--perform-scans nvd,osv`) or by repeating the option, or select every available scanner with `--perform-scans all`. Scans always run in the order Grype, NVD, OSV, sbom-cve-check after inputs are merged. Vulnerability-data refresh is a separate option.
@@ -274,8 +305,8 @@ This can be chained with other inputs to scan newly added files immediately:
 
 ```bash
 ./vulnscout --project demo \
-  --add-spdx example/spdx3/core-image-minimal-qemux86-64.rootfs.spdx.json \
-  --perform-scans grype
+  add spdx example/spdx3/core-image-minimal-qemux86-64.rootfs.spdx.json \
+  scan grype
 ```
 
 `--perform-scans grype` can consume significant RAM on large SBOMs.
@@ -284,14 +315,14 @@ Use `GRYPE_MEMLIMIT` to override:
 
 ```bash
 # Set a persistent limit
-./vulnscout --config GRYPE_MEMLIMIT 6GiB
+./vulnscout config set GRYPE_MEMLIMIT 6GiB
 
 # Or export it on the host before running (forwarded into the container)
 export GRYPE_MEMLIMIT=24GiB
-./vulnscout --project demo --perform-scans grype
+./vulnscout --project demo scan grype
 
 # Disable the limit entirely
-./vulnscout --config GRYPE_MEMLIMIT off
+./vulnscout config set GRYPE_MEMLIMIT off
 ```
 
 Accepts any value valid for Go's `GOMEMLIMIT` (`4GiB`, `8192MiB`, plain bytes).
@@ -304,15 +335,15 @@ Set to `off`, `0`, or `disabled` to remove the cap.
 `--perform-scans sbom-cve-check` runs a CVE scan powered by [sbom-cve-check](https://github.com/savoirfairelinux/sbom-cve-check). Unlike the NVD and OSV scanners, and once the databases are synced, this scan never makes network calls during analysis; it queries locally-cloned advisory databases (NVD-FKIE JSON feeds and CVEList V5).
 
 ```bash
-./vulnscout --project demo --variant x86 --perform-scans sbom-cve-check
+./vulnscout --project demo --variant x86 scan sbom-cve-check
 ```
 
 The scan can be chained with other inputs:
 
 ```bash
 ./vulnscout --project demo \
-  --add-spdx example/spdx3/core-image-minimal-qemux86-64.rootfs.spdx.json \
-  --perform-scans sbom-cve-check
+  add spdx example/spdx3/core-image-minimal-qemux86-64.rootfs.spdx.json \
+  scan sbom-cve-check
 ```
 
 ---
@@ -323,9 +354,9 @@ For CI pipelines or automated scans, use the `--match-condition` argument instea
 
 ```bash
 ./vulnscout --project demo \
-  --add-spdx /path/to/sbom.spdx.json \
-  --add-cve-check /path/to/cve-check.json \
-  --match-condition "((cvss >= 9.0 or (cvss >= 7.0 and epss >= 30%)) and (pending or affected))"
+  add spdx /path/to/sbom.spdx.json \
+  add cve-check /path/to/cve-check.json \
+  check "((cvss >= 9.0 or (cvss >= 7.0 and epss >= 30%)) and (pending or affected))"
 ```
 
 If vulnerabilities match the condition, the script exits with **code 2**, allowing CI systems to fail the pipeline.
@@ -351,7 +382,7 @@ Use `--project` to select the report scope; when omitted, the `default` project 
 ./vulnscout --project demo --variant x86 --report summary.adoc
 
 # Generate a match-condition report
-./vulnscout --project demo --match-condition "cvss >= 9.0" --report match_condition.adoc
+./vulnscout --project demo check "cvss >= 9.0" --report match_condition.adoc
 
 # Pass a local template file path — stages and runs it in one step
 ./vulnscout --project demo --report /path/to/my-custom-report.adoc
@@ -375,22 +406,22 @@ VulnScout can export the enriched project data as standard SBOM formats. Exporte
 
 ```bash
 # Export as SPDX 3.0 SBOM
-./vulnscout --project demo --export-spdx
+./vulnscout --project demo export spdx
 
 # Export as CycloneDX 1.6 SBOM
-./vulnscout --project demo --export-cdx
+./vulnscout --project demo export cdx
 
 # Export as OpenVEX document (vulnerabilities + assessments)
-./vulnscout --project demo --export-openvex
+./vulnscout --project demo export openvex
 ```
 
 Export commands can be chained with inputs and reports in a single invocation:
 
 ```bash
 ./vulnscout --project demo \
-  --add-spdx /path/to/sbom.spdx.json \
-  --add-cve-check /path/to/cve-check.json \
-  --export-spdx --export-cdx --export-openvex \
+  add spdx /path/to/sbom.spdx.json \
+  add cve-check /path/to/cve-check.json \
+  export spdx export cdx export openvex \
   --report summary.adoc
 ```
 
@@ -413,13 +444,13 @@ After import, pending AI assessments are available from the Review page's **AI
 Assessments** tab for approval or rejection.
 
 ```bash
-./vulnscout --project demo --export-custom-vulnscout-data
+./vulnscout --project demo export data
 ```
 
 Export one variant:
 
 ```bash
-./vulnscout --project demo --variant x86 --export-custom-vulnscout-data
+./vulnscout --project demo --variant x86 export data
 ```
 
 The `--import-custom-vulnscout-data` command restores entries according to the
@@ -433,9 +464,9 @@ not instance-local variant UUIDs. Legacy version 1 files remain importable;
 unsupported future versions are rejected explicitly.
 
 ```bash
-./vulnscout --project demo --import-custom-vulnscout-data /path/to/custom_vulnscout_data_all.json
+./vulnscout --project demo import data /path/to/custom_vulnscout_data_all.json
 
-./vulnscout --project demo --import-custom-vulnscout-data /path/to/custom_vulnscout_data_all.json --use-original-timestamps
+./vulnscout --project demo import data /path/to/custom_vulnscout_data_all.json --timestamps original
 ```
 
 ### OpenVEX
@@ -444,13 +475,13 @@ OpenVEX custom-assessment transfers operate on one JSON document and require `--
 
 ```bash
 # Export a variant
-./vulnscout --project demo --variant x86 --export-custom-openvex-assessments
+./vulnscout --project demo --variant x86 export assessments-openvex
 
 # Import into a variant
-./vulnscout --project demo --variant x86 --import-custom-openvex-assessments /path/to/custom_openvex_x86.json
+./vulnscout --project demo --variant x86 import assessments-openvex /path/to/custom_openvex_x86.json
 
 # Ignore OpenVEX statement timestamps and use the current system time
-./vulnscout --project demo --variant x86 --import-custom-openvex-assessments /path/to/custom_openvex_x86.json --use-current-timestamps
+./vulnscout --project demo --variant x86 import assessments-openvex /path/to/custom_openvex_x86.json --timestamps current
 ```
 
 OpenVEX imports preserve statement timestamps by default. Add

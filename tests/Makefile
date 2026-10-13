@@ -22,10 +22,11 @@ test_frontend:
 	fi
 
 test_ci:
-	shellcheck $(SRC_DIR)/../vulnscout $(SRC_DIR)/entrypoint.sh $(CI_DIR)/vulnscout_wrapper_test.sh
+	shellcheck $(SRC_DIR)/../vulnscout $(SRC_DIR)/entrypoint.sh $(CI_DIR)/vulnscout_wrapper_test.sh $(CI_DIR)/vulnscout_subcommands_test.sh
 	cd $(CI_DIR) && \
 	bash ./vulnscout_CI_test.sh && \
-	bash ./vulnscout_wrapper_test.sh
+	bash ./vulnscout_wrapper_test.sh && \
+	bash ./vulnscout_subcommands_test.sh
 
 validate_sbom:
 	bash $(MAKEFILE_DIR)/validate_sbom.sh
